@@ -1,4 +1,4 @@
-# cut-dlp
+# slice-youtube
 
 YouTube 영상에서 **필요한 구간만** 받는 데스크톱 앱. (Tauri 2 + Svelte 5 + yt-dlp)
 

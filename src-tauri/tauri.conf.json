@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "slice-youtube",
   "version": "0.1.0",
-  "identifier": "com.cutdlp.app",
+  "identifier": "com.slice-youtube.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "cut-dlp",
+        "title": "slice-youtube",
         "width": 1180,
         "height": 780,
         "minWidth": 900,
