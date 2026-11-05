@@ -52,6 +52,21 @@ Actions 탭에서 `build-ffmpeg`를 수동 실행(workflow_dispatch)하세요. �
 
 sidecar 바이너리는 git에 포함하지 않습니다.
 
+## 배포 (GitHub Release)
+
+버전 태그를 푸시하면 [`release`](.github/workflows/release.yml) 워크플로가 설치 파일(NSIS)과 포터블 zip을 빌드해 릴리스로 게시합니다.
+
+```bash
+# 1) src-tauri/tauri.conf.json, package.json, src-tauri/Cargo.toml 의 version 을 올리고 커밋
+# 2) 태그를 푸시 (태그는 tauri.conf.json 의 version 과 일치해야 함)
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+- 경량 LGPL ffmpeg 릴리스(`ffmpeg-*`)가 없으면 워크플로가 먼저 빌드합니다. 있으면 재사용합니다.
+- 산출물: `slice-youtube_<버전>_x64-setup.exe`(설치 파일), `slice-youtube-<버전>-portable-x64.zip`(포터블)
+- 로컬에서 만들려면 `pwsh scripts/fetch-binaries.ps1 -FfmpegRepo <owner>/<repo>` → `pnpm tauri build` → `pwsh scripts/make-portable.ps1 -Version <버전>`
+
 ## 알려진 사항
 
 - AV1 인코딩(영상이 AV1을 제공하지 않을 때의 폴백)은 libaom을 쓰므로 H.264/VP9보다 느립니다.
