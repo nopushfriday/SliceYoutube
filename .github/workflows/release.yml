@@ -1,0 +1,81 @@
+# 버전 태그(v0.1.0 등)를 푸시하면 설치 파일(NSIS)과 포터블 zip 을 빌드해 GitHub Release 로 게시한다.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# 태그는 src-tauri/tauri.conf.json 의 version 과 일치해야 한다. (package.json, Cargo.toml 도 같이 올릴 것)
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  # 경량 LGPL ffmpeg 가 아직 없으면 먼저 빌드한다. (이미 있으면 바로 끝남)
+  ffmpeg:
+    uses: ./.github/workflows/build-ffmpeg.yml
+    permissions:
+      contents: write
+
+  build:
+    needs: ffmpeg
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 태그와 앱 버전 일치 확인
+        id: ver
+        shell: bash
+        run: |
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::태그($GITHUB_REF_NAME)와 tauri.conf.json 의 version($VER)이 다릅니다."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 프런트엔드 의존성 설치
+        run: pnpm install --frozen-lockfile
+
+      - name: sidecar 준비 (yt-dlp, deno, 이 저장소가 빌드한 경량 ffmpeg)
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pwsh scripts/fetch-binaries.ps1 -FfmpegRepo "${{ github.repository }}"
+
+      - name: 빌드 (설치 파일)
+        run: pnpm tauri build
+
+      - name: 포터블 zip 만들기
+        shell: pwsh
+        run: pwsh scripts/make-portable.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: 릴리스 게시
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          FILES=(src-tauri/target/release/bundle/nsis/*-setup.exe dist/*.zip)
+          if [ ${#FILES[@]} -lt 2 ]; then echo "::error::배포 파일이 부족합니다: ${FILES[*]}"; exit 1; fi
+          ls -l "${FILES[@]}"
+          gh release create "$GITHUB_REF_NAME" "${FILES[@]}" \
+            --title "slice-youtube ${{ steps.ver.outputs.version }}" \
+            --generate-notes

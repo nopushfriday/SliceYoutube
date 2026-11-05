@@ -11,3 +11,6 @@ vite.config.ts.timestamp-*
 
 # sidecar binaries (scripts/fetch-binaries.ps1 로 준비)
 src-tauri/binaries/*.exe
+
+# 배포 산출물
+dist/

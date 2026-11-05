@@ -25,7 +25,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "languages": ["Korean", "English"]
+      }
+    },
     "externalBin": ["binaries/yt-dlp", "binaries/ffmpeg", "binaries/deno"],
     "icon": [
       "icons/32x32.png",

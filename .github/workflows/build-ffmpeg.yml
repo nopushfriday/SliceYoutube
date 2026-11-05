@@ -26,6 +26,18 @@ on:
         description: '같은 태그의 릴리스가 있어도 다시 빌드'
         type: boolean
         default: false
+  # release 워크플로에서 호출: 같은 버전/설정의 릴리스가 이미 있으면 바로 끝난다.
+  workflow_call:
+    inputs:
+      ffmpeg_version:
+        type: string
+        default: '9.0.2'
+      hwaccel:
+        type: boolean
+        default: true
+      force:
+        type: boolean
+        default: false
 
 permissions:
   contents: write
