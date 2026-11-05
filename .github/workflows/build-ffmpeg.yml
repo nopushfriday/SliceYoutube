@@ -128,8 +128,8 @@ jobs:
             --enable-static --disable-shared
             --pkg-config-flags=--static
             --extra-ldflags=-static
-            # 정적 libmp3lame 이 mpg123 을 참조한다
-            "--extra-libs=-lmpg123 -lshlwapi"
+            # 정적 libmp3lame 은 mpg123(+shlwapi), 정적 openh264 는 C++ 런타임을 요구한다
+            "--extra-libs=-lmpg123 -lshlwapi -lstdc++"
             --enable-small --enable-lto
             # mov/matroska 의 압축된 헤더 처리
             --enable-zlib
