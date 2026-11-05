@@ -215,13 +215,65 @@ fn parse_progress(s: &str, span: f64) -> Option<f64> {
     None
 }
 
+/// 번들 ffmpeg에서 쓸 수 있는 H.264 인코더를 고른다.
+/// libx264(GPL 빌드, 개발용) > libopenh264(배포용 LGPL 빌드) > h264_mf(Windows Media Foundation)
+async fn h264_encoder(app: &AppHandle) -> String {
+    let text = match app.shell().sidecar("ffmpeg") {
+        Ok(c) => c
+            .args(["-hide_banner", "-encoders"])
+            .output()
+            .await
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    ["libx264", "libopenh264", "h264_mf"]
+        .into_iter()
+        .find(|n| text.contains(&format!(" {n} ")))
+        .unwrap_or("libx264")
+        .to_string()
+}
+
+/// 해상도에 맞는 목표 비트레이트.
+/// libopenh264/h264_mf는 CRF가 없고 비트레이트 기준이며 기본값(200kbps)이 매우 낮아 반드시 지정해야 한다.
+fn target_bitrate(height: u32) -> &'static str {
+    match height {
+        0..=360 => "1M",
+        361..=480 => "2M",
+        481..=720 => "4M",
+        721..=1080 => "8M",
+        1081..=1440 => "14M",
+        _ => "28M",
+    }
+}
+
+/// 실제로 받게 될 영상의 높이(포맷 목록과 화질 상한으로 추정)
+fn selected_height(formats: &[FormatInfo], cap: u32, codec: Option<&str>) -> u32 {
+    formats
+        .iter()
+        .filter(|f| codec.is_none_or(|c| f.codec == c) && (cap == 0 || f.height <= cap))
+        .map(|f| f.height)
+        .max()
+        .unwrap_or(if cap == 0 { 1080 } else { cap })
+}
+
 /// 다운로드한 파일을 지정 코덱으로 인코딩하는 ffmpeg 인자
-fn encode_args(codec: &str, input: &str, output: &str) -> Vec<String> {
+fn encode_args(
+    codec: &str,
+    input: &str,
+    output: &str,
+    h264_enc: &str,
+    bitrate: &str,
+) -> Vec<String> {
     let mut a: Vec<&str> = vec!["-hide_banner", "-y", "-i", input];
     match codec {
-        "h264" => a.extend([
+        "h264" if h264_enc == "libx264" => a.extend([
             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a",
             "aac", "-b:a", "192k",
+        ]),
+        "h264" => a.extend([
+            "-c:v", h264_enc, "-b:v", bitrate, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a",
+            "192k",
         ]),
         "vp9" => a.extend([
             "-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-row-mt", "1", "-c:a", "libopus",
@@ -380,8 +432,21 @@ async fn download(
     );
     args.push("--download-sections".into());
     args.push(format!("*{}-{}", req.start, req.end));
+    // 받을 영상 높이로 목표 비트레이트를 정한다. (인코더 폴백과 정확한 컷에서 사용)
+    let src_height = selected_height(
+        &req.formats,
+        cap,
+        if want_codec && native { Some(want) } else { None },
+    );
+    let bitrate = target_bitrate(src_height);
     if req.accurate {
         args.push("--force-keyframes-at-cuts".into());
+        if !req.audio_only {
+            // 정확한 컷은 구간을 재인코딩한다. CRF가 없는 인코더(openh264 등)의 기본 비트레이트가
+            // 매우 낮으므로 출력 비트레이트를 명시한다. (copy 모드에서는 쓰이지 않음)
+            args.push("--downloader-args".into());
+            args.push(format!("ffmpeg_o:-b:v {bitrate}"));
+        }
     }
     if req.audio_only {
         args.extend(["-x", "--audio-format", "mp3", "-f", "ba/b"].map(String::from));
@@ -444,11 +509,12 @@ async fn download(
         .into_owned();
     let final_path = format!("{out_dir}/{name}");
     let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
+    let h264_enc = h264_encoder(&app).await;
     let ffmpeg = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| e.to_string())?
-        .args(encode_args(want, &downloaded, &final_path));
+        .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate));
     let e = run_job(&app, &jobs, req.job, ffmpeg, span, "encode").await?;
     cleanup(&tmp_dir);
     if e.cancelled {
