@@ -101,21 +101,22 @@ jobs:
         shell: msys2 {0}
         run: |
           VER="${{ inputs.ffmpeg_version }}"
-          # ffmpeg.org 가 연결을 끊는 경우가 있어 재시도하고, 안 되면 GitHub 미러의 태그 소스를 쓴다.
-          if curl -fsSL --retry 4 --retry-all-errors --retry-delay 5 -o ffmpeg-src.tar.xz "https://ffmpeg.org/releases/ffmpeg-${VER}.tar.xz"; then
-            SRC=ffmpeg-src.tar.xz
-          else
-            echo "::warning::ffmpeg.org 다운로드 실패, GitHub 미러(FFmpeg/FFmpeg 태그 n${VER})를 사용합니다."
-            curl -fsSL --retry 4 --retry-all-errors --retry-delay 5 -o ffmpeg-src.tar.gz "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${VER}.tar.gz"
+          # ffmpeg.org 가 러너에서 연결되지 않는 경우가 있어 GitHub 미러(공식 태그 소스)를 먼저 쓰고, 실패하면 ffmpeg.org 를 시도한다.
+          CURL="curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors --retry-delay 5"
+          if $CURL -o ffmpeg-src.tar.gz "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${VER}.tar.gz"; then
             SRC=ffmpeg-src.tar.gz
+          else
+            echo "::warning::GitHub 미러 다운로드 실패, ffmpeg.org 를 시도합니다."
+            $CURL -o ffmpeg-src.tar.xz "https://ffmpeg.org/releases/ffmpeg-${VER}.tar.xz"
+            SRC=ffmpeg-src.tar.xz
           fi
           echo "$SRC" > src-name.txt
-          mkdir src && tar -xf "$SRC" -C src --strip-components=1
+          mkdir ffsrc && tar -xf "$SRC" -C ffsrc --strip-components=1
 
       - name: configure
         if: steps.exists.outputs.found != 'true'
         shell: msys2 {0}
-        working-directory: src
+        working-directory: ffsrc
         run: |
           # 앱에 필요한 기능만 켠다. 빠진 게 있으면 여기에 추가하고 CONFIG_REV 를 올린다.
           OPTS=(
@@ -166,7 +167,7 @@ jobs:
       - name: 빌드
         if: steps.exists.outputs.found != 'true'
         shell: msys2 {0}
-        working-directory: src
+        working-directory: ffsrc
         run: |
           make -j"$(nproc)" ffmpeg.exe
           strip ffmpeg.exe
@@ -175,7 +176,7 @@ jobs:
       - name: 검증 (라이선스, 링크, 인코더, 스모크 테스트)
         if: steps.exists.outputs.found != 'true'
         shell: msys2 {0}
-        working-directory: src
+        working-directory: ffsrc
         run: |
           set -e
           ./ffmpeg.exe -hide_banner -version | tee ../version.txt
@@ -209,8 +210,8 @@ jobs:
         shell: msys2 {0}
         run: |
           mkdir dist
-          cp src/ffmpeg.exe dist/ffmpeg-x86_64-pc-windows-msvc.exe   # Tauri sidecar 이름 규칙
-          cp src/COPYING.LGPLv2.1 src/COPYING.LGPLv3 dist/ 2>/dev/null || true
+          cp ffsrc/ffmpeg.exe dist/ffmpeg-x86_64-pc-windows-msvc.exe   # Tauri sidecar 이름 규칙
+          cp ffsrc/COPYING.LGPLv2.1 ffsrc/COPYING.LGPLv3 dist/ 2>/dev/null || true
           SRC=$(cat src-name.txt)
           cp "$SRC" "dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.${SRC#ffmpeg-src.}"   # LGPL 소스 제공
           {
