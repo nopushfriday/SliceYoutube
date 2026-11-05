@@ -62,6 +62,14 @@
   let audioOnly = $state(false);
   let maxHeight = $state(0); // 0 = 최고 화질 자동
   let codec = $state<Codec>('auto');
+  let hwAccel = $state(true);
+  // 감지된 하드웨어 H.264 인코더: undefined = 확인 중, null = 없음(CPU 인코딩)
+  let hwEnc = $state<string | null | undefined>(undefined);
+  const HW_LABEL: Record<string, string> = {
+    h264_nvenc: 'NVIDIA NVENC',
+    h264_amf: 'AMD AMF',
+    h264_mf: 'Windows Media Foundation'
+  };
   let outDir = $state('');
   let showSettings = $state(false);
   let showHelp = $state(false);
@@ -112,7 +120,11 @@
     audioOnly = saved.audioOnly ?? false;
     maxHeight = saved.maxHeight ?? 0;
     codec = saved.codec ?? 'auto';
+    hwAccel = saved.hwAccel ?? true;
     updateYtdlp(); // 앱을 열 때마다 yt-dlp 최신 버전 확인
+    invoke<string | null>('hw_encoder')
+      .then((e) => (hwEnc = e))
+      .catch(() => (hwEnc = null));
     (async () => {
       outDir = saved.outDir ?? (await join(await downloadDir(), 'cut-dlp'));
     })();
@@ -132,7 +144,7 @@
   });
 
   $effect(() => {
-    localStorage.setItem('cut-dlp', JSON.stringify({ accurate, audioOnly, maxHeight, codec, outDir }));
+    localStorage.setItem('cut-dlp', JSON.stringify({ accurate, audioOnly, maxHeight, codec, hwAccel, outDir }));
   });
 
   async function load() {
@@ -249,6 +261,7 @@
             audioOnly,
             maxHeight,
             codec,
+            hwAccel,
             formats: s.formats,
             outDir
           }
@@ -462,6 +475,22 @@
           <label class="check" title="끄면 키프레임 단위로 잘라 더 빠르지만 시작/끝이 몇 초 어긋날 수 있음">
             <input type="checkbox" bind:checked={accurate} /> 정확한 컷 (구간만 재인코딩)
           </label>
+          {#if !audioOnly}
+            <label class="check" title="H.264로 인코딩할 때 GPU를 사용합니다. 지원하지 않거나 실패하면 CPU로 자동 전환됩니다.">
+              <input type="checkbox" bind:checked={hwAccel} disabled={hwEnc === null} /> 하드웨어 인코딩 (H.264)
+            </label>
+            <p class="note">
+              {#if hwEnc === undefined}
+                하드웨어 확인 중…
+              {:else if hwEnc === null}
+                사용 가능한 하드웨어 인코더가 없어 CPU로 인코딩합니다.
+              {:else if hwAccel}
+                {HW_LABEL[hwEnc] ?? hwEnc} 사용 (실패하면 CPU로 자동 전환)
+              {:else}
+                꺼짐 — CPU로 인코딩합니다. ({HW_LABEL[hwEnc] ?? hwEnc} 사용 가능)
+              {/if}
+            </p>
+          {/if}
         </div>
       {/if}
 

@@ -44,6 +44,8 @@ struct DownloadReq {
     audio_only: bool,
     /// 0 = 제한 없음(최고 화질)
     max_height: u32,
+    /// 하드웨어 인코딩 사용(지원되는 경우에만). 미지원/실패 시 CPU로 자동 폴백
+    hw_accel: bool,
     /// "auto" | "h264" | "vp9" | "av1"
     codec: String,
     formats: Vec<FormatInfo>,
@@ -257,14 +259,79 @@ fn selected_height(formats: &[FormatInfo], cap: u32, codec: Option<&str>) -> u32
         .unwrap_or(if cap == 0 { 1080 } else { cap })
 }
 
+/// 하드웨어 H.264 인코더 후보 (우선순위 순). QSV는 별도 라이브러리가 필요해 Media Foundation이 대신한다.
+const HW_CANDIDATES: [&str; 3] = ["h264_nvenc", "h264_amf", "h264_mf"];
+
+/// 하드웨어 인코더 인자 (비트레이트 기준)
+fn hw_h264_args(enc: &str, bitrate: &str) -> Vec<String> {
+    let v: Vec<&str> = match enc {
+        "h264_nvenc" => vec!["-c:v", enc, "-preset", "p5", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
+        "h264_amf" => vec!["-c:v", enc, "-quality", "quality", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
+        // hw_encoding=1: 하드웨어 변환기가 없으면 실패시켜 소프트웨어로 대체되게 한다
+        _ => vec!["-c:v", enc, "-hw_encoding", "1", "-b:v", bitrate],
+    };
+    v.into_iter().map(String::from).collect()
+}
+
+/// 실제로 하드웨어 인코딩이 되는지 짧은 테스트 인코딩으로 확인한다.
+/// (컴파일되어 있어도 GPU/드라이버가 없으면 실패하므로 인코더 목록만으로는 알 수 없다)
+async fn probe_hw(app: &AppHandle) -> Option<String> {
+    for enc in HW_CANDIDATES {
+        let mut args: Vec<String> = [
+            "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+            "testsrc2=size=640x360:rate=1:duration=1", "-frames:v", "1",
+        ]
+        .map(String::from)
+        .to_vec();
+        args.extend(hw_h264_args(enc, "1M"));
+        args.extend(["-f", "null", "-"].map(String::from));
+        let Ok(cmd) = app.shell().sidecar("ffmpeg") else {
+            return None;
+        };
+        if let Ok(o) = cmd.args(args).output().await {
+            if o.status.success() {
+                return Some(enc.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 감지된 하드웨어 인코더 (앱 실행 중 한 번만 검사해 재사용)
+#[derive(Default)]
+struct HwCache(Mutex<Option<Option<String>>>);
+
+async fn detect_hw(app: &AppHandle, cache: &HwCache) -> Option<String> {
+    if let Some(v) = cache.0.lock().unwrap().clone() {
+        return v;
+    }
+    let found = probe_hw(app).await;
+    *cache.0.lock().unwrap() = Some(found.clone());
+    found
+}
+
+/// UI 표시용: 감지된 하드웨어 인코더 이름 (없으면 None)
+#[tauri::command]
+async fn hw_encoder(app: AppHandle, cache: State<'_, HwCache>) -> Result<Option<String>, String> {
+    Ok(detect_hw(&app, &cache).await)
+}
+
 /// 다운로드한 파일을 지정 코덱으로 인코딩하는 ffmpeg 인자
+/// `hw`가 Some이면 H.264를 해당 하드웨어 인코더로 인코딩한다.
 fn encode_args(
     codec: &str,
     input: &str,
     output: &str,
     h264_enc: &str,
     bitrate: &str,
+    hw: Option<&str>,
 ) -> Vec<String> {
+    if let (Some(enc), "h264") = (hw, codec) {
+        let mut a: Vec<String> = ["-hide_banner", "-y", "-i", input].map(String::from).to_vec();
+        a.extend(hw_h264_args(enc, bitrate));
+        a.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output].map(String::from));
+        return a;
+    }
     let mut a: Vec<&str> = vec!["-hide_banner", "-y", "-i", input];
     match codec {
         "h264" if h264_enc == "libx264" => a.extend([
@@ -366,15 +433,27 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
 
     // 제공되는 (코덱, 높이) 조합 수집
-    let mut formats: Vec<FormatInfo> = Vec::new();
-    for f in v["formats"].as_array().into_iter().flatten() {
-        let Some(codec) = f["vcodec"].as_str().and_then(norm_codec) else {
-            continue;
-        };
-        let height = f["height"].as_u64().unwrap_or(0) as u32;
-        if !formats.iter().any(|x| x.codec == codec && x.height == height) {
-            formats.push(FormatInfo { codec: codec.to_string(), height });
+    // HLS(m3u8) 포맷은 제외한다: 구간 수신이 비효율적이고 재인코딩 시 코덱이 바뀌는 문제가 있었다.
+    // (https가 하나도 없는 사이트면 전체 포맷을 사용)
+    let collect = |https_only: bool| {
+        let mut out: Vec<FormatInfo> = Vec::new();
+        for f in v["formats"].as_array().into_iter().flatten() {
+            if https_only && f["protocol"].as_str() != Some("https") {
+                continue;
+            }
+            let Some(codec) = f["vcodec"].as_str().and_then(norm_codec) else {
+                continue;
+            };
+            let height = f["height"].as_u64().unwrap_or(0) as u32;
+            if !out.iter().any(|x| x.codec == codec && x.height == height) {
+                out.push(FormatInfo { codec: codec.to_string(), height });
+            }
         }
+        out
+    };
+    let mut formats = collect(true);
+    if formats.is_empty() {
+        formats = collect(false);
     }
 
     Ok(VideoInfo {
@@ -390,6 +469,120 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     })
 }
 
+/// 실제로 받게 될 영상 스트림의 코덱을 정한다. (포맷 정보가 없으면 None)
+/// 같은 해상도라면 정확한 컷(재인코딩)일 때는 빠른 H.264를, 아니면 압축 효율이 좋은 코덱을 우선한다.
+fn pick_src_codec(formats: &[FormatInfo], cap: u32, accurate: bool) -> Option<&'static str> {
+    let best = formats
+        .iter()
+        .filter(|f| cap == 0 || f.height <= cap)
+        .map(|f| f.height)
+        .max()?;
+    let order: [&'static str; 3] = if accurate {
+        ["h264", "vp9", "av1"]
+    } else {
+        ["av1", "vp9", "h264"]
+    };
+    order
+        .into_iter()
+        .find(|c| formats.iter().any(|f| f.codec == *c && f.height == best))
+}
+
+/// 정확한 컷(재인코딩)에서 받는 스트림 코덱에 맞춰 인코더를 명시한다.
+/// 지정하지 않으면 ffmpeg가 출력 컨테이너(mp4)의 기본값인 H.264로 인코딩해 버린다.
+fn cut_encoder_args(
+    src_codec: Option<&str>,
+    cut_hw: Option<&str>,
+    h264_enc: &str,
+    bitrate: &str,
+) -> Vec<String> {
+    let v: Vec<String> = match (src_codec, cut_hw) {
+        (Some("h264"), Some(hw)) => return hw_h264_args(hw, bitrate),
+        (Some("h264"), None) if h264_enc == "libx264" => {
+            ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p"]
+                .map(String::from)
+                .to_vec()
+        }
+        (Some("h264"), None) => ["-c:v", h264_enc, "-b:v", bitrate, "-pix_fmt", "yuv420p"]
+            .map(String::from)
+            .to_vec(),
+        (Some("vp9"), _) => ["-c:v", "libvpx-vp9", "-b:v", bitrate, "-row-mt", "1", "-cpu-used", "4"]
+            .map(String::from)
+            .to_vec(),
+        (Some("av1"), _) => {
+            ["-c:v", "libaom-av1", "-b:v", bitrate, "-cpu-used", "8", "-row-mt", "1"]
+                .map(String::from)
+                .to_vec()
+        }
+        _ => vec!["-b:v".to_string(), bitrate.to_string()],
+    };
+    v
+}
+
+/// yt-dlp 다운로드 인자를 만든다. `cut_hw`가 Some이면 정확한 컷의 재인코딩을 해당 하드웨어 인코더로 한다.
+fn build_dl_args(
+    req: &DownloadReq,
+    dl_dir: &str,
+    src_codec: Option<&str>,
+    h264_enc: &str,
+    bitrate: &str,
+    cut_hw: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let cap = req.max_height;
+    let mut args = base_args()?;
+    args.extend(
+        ["--newline", "--no-playlist", "--windows-filenames", "--no-mtime"].map(String::from),
+    );
+    args.push("--download-sections".into());
+    args.push(format!("*{}-{}", req.start, req.end));
+    if req.accurate {
+        args.push("--force-keyframes-at-cuts".into());
+        if !req.audio_only {
+            // 정확한 컷은 구간을 재인코딩한다. CRF가 없는 인코더(openh264 등)의 기본 비트레이트가
+            // 매우 낮으므로 출력 비트레이트를 명시한다. (copy 모드에서는 쓰이지 않음)
+            let out_args = cut_encoder_args(src_codec, cut_hw, h264_enc, bitrate).join(" ");
+            args.push("--downloader-args".into());
+            args.push(format!("ffmpeg_o:{out_args}"));
+        }
+    }
+    if req.audio_only {
+        args.extend(["-x", "--audio-format", "mp3", "-f", "ba/b"].map(String::from));
+    } else {
+        // 높이 상한(있다면) 내에서 해상도 → fps 순으로 최고 화질. 분리 스트림(bv+ba)이라 구간만 수신
+        let sort = if cap == 0 { "res,fps".to_string() } else { format!("res:{cap},fps") };
+        let hf = if cap == 0 { String::new() } else { format!("[height<={cap}]") };
+        // 직접 https 스트림(DASH)을 우선하고, 없을 때만 그 외(HLS 등)로 대체한다.
+        let selector = match src_codec {
+            Some(c) => {
+                let p = codec_prefix(c);
+                format!(
+                    "bv*[vcodec^={p}]{hf}[protocol=https]+ba[protocol=https]/bv*[vcodec^={p}]{hf}+ba"
+                )
+            }
+            // 포맷 정보가 없는 사이트
+            None => format!("bv*{hf}[protocol=https]+ba[protocol=https]/bv*{hf}+ba/b{hf}"),
+        };
+        args.extend([
+            "-S".to_string(),
+            sort,
+            "-f".into(),
+            selector,
+            "--merge-output-format".into(),
+            "mp4".into(),
+        ]);
+    }
+    args.extend([
+        "-o".into(),
+        format!(
+            "{dl_dir}/%(title).120B [{}-{}].%(ext)s",
+            time_tag(req.start),
+            time_tag(req.end)
+        ),
+    ]);
+    args.extend(["--print".into(), "after_move:CUTDLP_FILE %(filepath)s".into()]);
+    args.push(req.url.clone());
+    Ok(args)
+}
+
 /// 지정 구간만 다운로드한다. (--download-sections: ffmpeg가 HTTP Range로 해당 구간만 요청)
 ///
 /// 코덱 지정 시:
@@ -401,6 +594,7 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
 async fn download(
     app: AppHandle,
     jobs: State<'_, Jobs>,
+    hw_cache: State<'_, HwCache>,
     req: DownloadReq,
 ) -> Result<String, String> {
     if req.end <= req.start {
@@ -426,62 +620,38 @@ async fn download(
         let _ = std::fs::remove_dir_all(tmp);
     };
 
-    let mut args = base_args()?;
-    args.extend(
-        ["--newline", "--no-playlist", "--windows-filenames", "--no-mtime"].map(String::from),
-    );
-    args.push("--download-sections".into());
-    args.push(format!("*{}-{}", req.start, req.end));
-    // 받을 영상 높이로 목표 비트레이트를 정한다. (인코더 폴백과 정확한 컷에서 사용)
-    let src_height = selected_height(
-        &req.formats,
-        cap,
-        if want_codec && native { Some(want) } else { None },
-    );
-    let bitrate = target_bitrate(src_height);
-    if req.accurate {
-        args.push("--force-keyframes-at-cuts".into());
-        if !req.audio_only {
-            // 정확한 컷은 구간을 재인코딩한다. CRF가 없는 인코더(openh264 등)의 기본 비트레이트가
-            // 매우 낮으므로 출력 비트레이트를 명시한다. (copy 모드에서는 쓰이지 않음)
-            args.push("--downloader-args".into());
-            args.push(format!("ffmpeg_o:-b:v {bitrate}"));
-        }
-    }
-    if req.audio_only {
-        args.extend(["-x", "--audio-format", "mp3", "-f", "ba/b"].map(String::from));
+    // 받을 스트림의 코덱: 지정 코덱을 그대로 받는 경우는 그 코덱, 그 외(자동/인코딩 폴백)는 직접 고른다.
+    let src_codec: Option<&str> = if req.audio_only {
+        None
+    } else if want_codec && native {
+        Some(want)
     } else {
-        // 높이 상한(있다면) 내에서 해상도 → fps 순으로 최고 화질. 분리 스트림(bv+ba)이라 구간만 수신
-        let sort = if cap == 0 { "res,fps".to_string() } else { format!("res:{cap},fps") };
-        let hf = if cap == 0 { String::new() } else { format!("[height<={cap}]") };
-        let selector = if want_codec && native {
-            format!("bv*[vcodec^={}]{hf}+ba", codec_prefix(want))
-        } else {
-            // 자동(제공되는 최고 화질) 또는 인코딩 폴백용 원본
-            format!("bv*{hf}+ba/b{hf}")
-        };
-        args.extend([
-            "-S".to_string(),
-            sort,
-            "-f".into(),
-            selector,
-            "--merge-output-format".into(),
-            "mp4".into(),
-        ]);
-    }
-    args.extend([
-        "-o".into(),
-        format!(
-            "{dl_dir}/%(title).120B [{}-{}].%(ext)s",
-            time_tag(req.start),
-            time_tag(req.end)
-        ),
-    ]);
-    args.extend(["--print".into(), "after_move:CUTDLP_FILE %(filepath)s".into()]);
-    args.push(req.url.clone());
+        pick_src_codec(&req.formats, cap, req.accurate)
+    };
+    // 받을 영상 높이로 목표 비트레이트를 정한다. (인코더 폴백과 정확한 컷에서 사용)
+    let bitrate = target_bitrate(selected_height(&req.formats, cap, src_codec));
+    let h264_enc = h264_encoder(&app).await;
 
-    let cmd = ytdlp_cmd(&app).await?.args(args);
-    let r = run_job(&app, &jobs, req.job, cmd, span, "download").await?;
+    // 하드웨어 인코더 감지(앱 실행 중 한 번). 지원하지 않으면 None → CPU 인코딩
+    let hw = if req.hw_accel && !req.audio_only {
+        detect_hw(&app, &hw_cache).await
+    } else {
+        None
+    };
+    // 정확한 컷의 재인코딩을 하드웨어로 하려면 받는 스트림이 H.264여야 한다.
+    let cut_hw = if req.accurate && src_codec == Some("h264") { hw.as_deref() } else { None };
+
+    let mut r = {
+        let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, cut_hw)?;
+        let cmd = ytdlp_cmd(&app).await?.args(args);
+        run_job(&app, &jobs, req.job, cmd, span, "download").await?
+    };
+    // 하드웨어 인코더가 실패하면(드라이버 오류, 세션 제한 등) CPU 인코딩으로 자동 재시도
+    if cut_hw.is_some() && !r.cancelled && r.code != Some(0) {
+        let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, None)?;
+        let cmd = ytdlp_cmd(&app).await?.args(args);
+        r = run_job(&app, &jobs, req.job, cmd, span, "download").await?;
+    }
     if r.cancelled {
         cleanup(&tmp_dir);
         return Err("cancelled".into());
@@ -509,13 +679,20 @@ async fn download(
         .into_owned();
     let final_path = format!("{out_dir}/{name}");
     let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
-    let h264_enc = h264_encoder(&app).await;
-    let ffmpeg = app
-        .shell()
-        .sidecar("ffmpeg")
-        .map_err(|e| e.to_string())?
-        .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate));
-    let e = run_job(&app, &jobs, req.job, ffmpeg, span, "encode").await?;
+    let encode = |hw: Option<&str>| -> Result<Command, String> {
+        Ok(app
+            .shell()
+            .sidecar("ffmpeg")
+            .map_err(|e| e.to_string())?
+            .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate, hw)))
+    };
+    // H.264 변환은 하드웨어 인코더가 있으면 먼저 시도하고, 실패하면 CPU 인코딩으로 자동 재시도
+    let hw_try = if want == "h264" { hw.as_deref() } else { None };
+    let mut e = run_job(&app, &jobs, req.job, encode(hw_try)?, span, "encode").await?;
+    if hw_try.is_some() && !e.cancelled && e.code != Some(0) {
+        let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
+        e = run_job(&app, &jobs, req.job, encode(None)?, span, "encode").await?;
+    }
     cleanup(&tmp_dir);
     if e.cancelled {
         let _ = std::fs::remove_file(&final_path);
@@ -543,6 +720,7 @@ fn cancel(jobs: State<'_, Jobs>, job: u32) {
 pub fn run() {
     tauri::Builder::default()
         .manage(Jobs::default())
+        .manage(HwCache::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -550,7 +728,8 @@ pub fn run() {
             fetch_info,
             download,
             cancel,
-            ytdlp_update
+            ytdlp_update,
+            hw_encoder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
