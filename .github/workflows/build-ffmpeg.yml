@@ -161,7 +161,7 @@ jobs:
           if [ "${{ inputs.hwaccel }}" = "true" ]; then
             # 하드웨어 인코더: 헤더만 사용하고 GPU 드라이버 DLL 은 런타임에 로드한다. 없으면 자동으로 실패(소프트웨어로 대체).
             OPTS+=(
-              --enable-ffnvcodec --enable-nvenc --enable-amf --enable-mediafoundation
+              --enable-ffnvcodec --enable-nvenc --enable-amf --enable-d3d11va --enable-mediafoundation
               --enable-encoder=h264_nvenc,h264_amf,h264_mf
             )
           fi
