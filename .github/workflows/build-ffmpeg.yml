@@ -129,7 +129,7 @@ jobs:
             --pkg-config-flags=--static
             --extra-ldflags=-static
             # 정적 libmp3lame 이 mpg123 을 참조한다
-            --extra-libs=-lmpg123 --extra-libs=-lshlwapi
+            "--extra-libs=-lmpg123 -lshlwapi"
             --enable-small --enable-lto
             # mov/matroska 의 압축된 헤더 처리
             --enable-zlib
