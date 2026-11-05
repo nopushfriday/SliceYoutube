@@ -1,10 +1,14 @@
-use std::{collections::HashMap, path::Path, sync::Mutex};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{
     ShellExt,
-    process::{CommandChild, CommandEvent},
+    process::{Command, CommandChild, CommandEvent},
 };
 
 /// 실행 중인 작업(취소용). job 하나당 현재 실행 중인 프로세스 1개
@@ -54,22 +58,110 @@ struct Progress {
     phase: &'static str,
 }
 
-/// yt-dlp 공통 인자: 번들된 ffmpeg 위치와 JS 런타임 지정
-fn base_args() -> Result<Vec<String>, String> {
+/// 번들된 sidecar들이 있는 폴더 (실행 파일과 같은 폴더)
+fn bundled_dir() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let dir = exe.parent().ok_or("실행 파일 경로를 찾을 수 없습니다")?;
+    exe.parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "실행 파일 경로를 찾을 수 없습니다".to_string())
+}
+
+/// yt-dlp 공통 인자: 번들된 ffmpeg 위치와 JS 런타임(deno 우선) 지정
+fn base_args() -> Result<Vec<String>, String> {
+    let dir = bundled_dir()?;
     let mut a = vec![
         "--ffmpeg-location".to_string(),
         dir.to_string_lossy().into_owned(),
     ];
     let deno = dir.join("deno.exe");
-    if deno.exists() {
-        a.push("--js-runtimes".into());
-        a.push(format!("deno:{}", deno.display()));
-    }
     a.push("--js-runtimes".into());
-    a.push("node".into());
+    a.push(if deno.exists() {
+        format!("deno:{}", deno.display())
+    } else {
+        "node".to_string()
+    });
     Ok(a)
+}
+
+/// 자동 업데이트가 가능한 yt-dlp 복사본 위치 (설치 폴더는 쓰기 불가일 수 있어 앱 데이터에 둔다)
+fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("bin");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("yt-dlp.exe"))
+}
+
+async fn version_of(app: &AppHandle, path: &Path) -> Option<String> {
+    let out = app
+        .shell()
+        .command(path)
+        .args(["--version"])
+        .output()
+        .await
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// 갱신 가능한 복사본을 보장한다. 없거나 번들본이 더 최신이면 번들본으로 (다시) 복사한다.
+async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
+    let path = ytdlp_path(app)?;
+    let bundled = bundled_dir()?.join("yt-dlp.exe");
+    let need_copy = if !path.exists() {
+        true
+    } else {
+        match (version_of(app, &bundled).await, version_of(app, &path).await) {
+            (Some(b), Some(c)) => b > c, // 버전이 날짜 형식(2026.10.26)이라 문자열 비교로 충분
+            (_, None) => true,
+            _ => false,
+        }
+    };
+    if need_copy {
+        std::fs::copy(&bundled, &path).map_err(|e| format!("yt-dlp 준비 실패: {e}"))?;
+    }
+    Ok(path)
+}
+
+#[derive(Serialize)]
+struct YtStatus {
+    version: Option<String>,
+    /// 이번 확인에서 새 버전으로 바뀌었는가
+    updated: bool,
+    /// 업데이트 확인 실패 사유 (오프라인 등). 이전 버전은 계속 사용 가능
+    error: Option<String>,
+}
+
+/// yt-dlp를 최신 버전으로 업데이트한다. 앱 시작 시와 사용자가 요청할 때 호출된다.
+#[tauri::command]
+async fn ytdlp_update(app: AppHandle) -> Result<YtStatus, String> {
+    let path = ensure_ytdlp(&app).await?;
+    let before = version_of(&app, &path).await;
+    let res = app.shell().command(&path).args(["-U"]).output().await;
+    let after = version_of(&app, &path).await;
+    let error = match res {
+        Ok(o) if o.status.success() => None,
+        Ok(o) => Some(
+            String::from_utf8_lossy(&o.stderr)
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("업데이트를 확인하지 못했습니다")
+                .trim()
+                .to_string(),
+        ),
+        Err(e) => Some(e.to_string()),
+    };
+    let updated = matches!((&before, &after), (Some(b), Some(a)) if a != b);
+    Ok(YtStatus { version: after, updated, error })
+}
+
+/// yt-dlp 실행 명령 (업데이트 가능한 복사본 사용)
+async fn ytdlp_cmd(app: &AppHandle) -> Result<Command, String> {
+    Ok(app.shell().command(ensure_ytdlp(app).await?))
 }
 
 /// yt-dlp의 vcodec 문자열을 h264/vp9/av1로 정규화
@@ -134,8 +226,10 @@ fn encode_args(codec: &str, input: &str, output: &str) -> Vec<String> {
         "vp9" => a.extend([
             "-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-row-mt", "1", "-c:a", "libopus",
         ]),
+        // essentials 빌드에는 SVT-AV1이 없어 libaom 사용 (-cpu-used로 속도 확보)
         _ => a.extend([
-            "-c:v", "libsvtav1", "-crf", "30", "-preset", "6", "-c:a", "libopus",
+            "-c:v", "libaom-av1", "-crf", "30", "-b:v", "0", "-cpu-used", "6", "-row-mt", "1",
+            "-c:a", "libopus",
         ]),
     }
     a.extend(["-movflags", "+faststart", output]);
@@ -154,18 +248,11 @@ async fn run_job(
     app: &AppHandle,
     jobs: &State<'_, Jobs>,
     job: u32,
-    program: &str,
-    args: Vec<String>,
+    cmd: Command,
     span: f64,
     phase: &'static str,
 ) -> Result<Outcome, String> {
-    let (mut rx, child) = app
-        .shell()
-        .sidecar(program)
-        .map_err(|e| e.to_string())?
-        .args(args)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let (mut rx, child) = cmd.spawn().map_err(|e| e.to_string())?;
     jobs.0.lock().unwrap().insert(job, child);
 
     let mut file: Option<String> = None;
@@ -207,10 +294,8 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     args.extend(["-J", "--no-playlist", "--no-warnings"].map(String::from));
     args.push(url);
 
-    let out = app
-        .shell()
-        .sidecar("yt-dlp")
-        .map_err(|e| e.to_string())?
+    let out = ytdlp_cmd(&app)
+        .await?
         .args(args)
         .output()
         .await
@@ -330,7 +415,8 @@ async fn download(
     args.extend(["--print".into(), "after_move:CUTDLP_FILE %(filepath)s".into()]);
     args.push(req.url.clone());
 
-    let r = run_job(&app, &jobs, req.job, "yt-dlp", args, span, "download").await?;
+    let cmd = ytdlp_cmd(&app).await?.args(args);
+    let r = run_job(&app, &jobs, req.job, cmd, span, "download").await?;
     if r.cancelled {
         cleanup(&tmp_dir);
         return Err("cancelled".into());
@@ -358,16 +444,12 @@ async fn download(
         .into_owned();
     let final_path = format!("{out_dir}/{name}");
     let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
-    let e = run_job(
-        &app,
-        &jobs,
-        req.job,
-        "ffmpeg",
-        encode_args(want, &downloaded, &final_path),
-        span,
-        "encode",
-    )
-    .await?;
+    let ffmpeg = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
+        .args(encode_args(want, &downloaded, &final_path));
+    let e = run_job(&app, &jobs, req.job, ffmpeg, span, "encode").await?;
     cleanup(&tmp_dir);
     if e.cancelled {
         let _ = std::fs::remove_file(&final_path);
@@ -398,7 +480,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![fetch_info, download, cancel])
+        .invoke_handler(tauri::generate_handler![
+            fetch_info,
+            download,
+            cancel,
+            ytdlp_update
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

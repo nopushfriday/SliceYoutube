@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@tabler/icons-webfont':
+        specifier: ^3.50.0
+        version: 3.50.0
       '@tauri-apps/api':
         specifier: ^2
         version: 2.12.4
@@ -205,6 +208,12 @@ packages:
     peerDependencies:
       svelte: ^5.46.4
       vite: ^8.0.0-beta.7 || ^8.0.0
+
+  '@tabler/icons-webfont@3.50.0':
+    resolution: {integrity: sha512-QXl9AQKwN5tNb4+krosM0ITtI9FK7oyJ2fVQLwaeZG9VZVUFBrqZlbCqI7n6P5Z8bCGdO4ygXtWiR/MSFKDTJg==}
+
+  '@tabler/icons@3.50.0':
+    resolution: {integrity: sha512-HflLxyrH1cqC7s7jzQGSjpsTAVIoaf7+/yHjbdM59rJQBMjliibp+LYhDPFxOMcwa1M8DNpOk6ENzQiWn9a1Dg==}
 
   '@tauri-apps/api@2.12.4':
     resolution: {integrity: sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==}
@@ -691,6 +700,12 @@ snapshots:
       svelte: 5.57.3
       vite: 8.3.5
       vitefu: 1.1.3(vite@8.3.5)
+
+  '@tabler/icons-webfont@3.50.0':
+    dependencies:
+      '@tabler/icons': 3.50.0
+
+  '@tabler/icons@3.50.0': {}
 
   '@tauri-apps/api@2.12.4': {}
 

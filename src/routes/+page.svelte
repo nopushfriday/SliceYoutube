@@ -27,6 +27,17 @@
     error?: string;
   };
 
+  const SHORTCUTS: [string, string][] = [
+    ['Q', '시작 지점 지정'],
+    ['W', '끝 지점 지정'],
+    ['Enter', '클립을 큐에 추가 (숫자패드 Enter 포함)'],
+    ['Space', '재생 / 일시정지'],
+    ['← →', '5초 이동 (Shift: 1초)'],
+    [', .', '1프레임 이동'],
+    ['\\', '구간 반복 켜기/끄기'],
+    ['?', '이 도움말']
+  ];
+
   let url = $state('');
   let loading = $state(false);
   let error = $state('');
@@ -52,6 +63,24 @@
   let maxHeight = $state(0); // 0 = 최고 화질 자동
   let codec = $state<Codec>('auto');
   let outDir = $state('');
+  let showSettings = $state(false);
+  let showHelp = $state(false);
+
+  // yt-dlp 자동 업데이트 상태
+  type Yt = { version: string | null; updated: boolean; error: string | null };
+  let ytBusy = $state(true);
+  let yt = $state<Yt>({ version: null, updated: false, error: null });
+
+  async function updateYtdlp() {
+    ytBusy = true;
+    try {
+      yt = await invoke<Yt>('ytdlp_update');
+    } catch (e) {
+      yt = { version: yt.version, updated: false, error: String(e) };
+    } finally {
+      ytBusy = false;
+    }
+  }
 
   const valid = $derived(start != null && end != null && end > start);
   const offered = $derived(
@@ -64,6 +93,18 @@
       codec !== 'auto' &&
       !info.formats.some((f) => f.codec === codec && (maxHeight === 0 || f.height <= maxHeight))
   );
+  const pendingCount = $derived(
+    segs.filter((s) => ['pending', 'error', 'cancelled'].includes(s.status)).length
+  );
+  const summary = $derived(
+    audioOnly
+      ? 'MP3 오디오'
+      : [
+          maxHeight === 0 ? '최고 화질' : `${maxHeight}p 이하`,
+          codec === 'auto' ? '자동 코덱' : CODEC_LABEL[codec],
+          accurate ? '정확한 컷' : '빠른 컷'
+        ].join(' · ')
+  );
 
   onMount(() => {
     const saved = JSON.parse(localStorage.getItem('cut-dlp') ?? '{}');
@@ -71,6 +112,7 @@
     audioOnly = saved.audioOnly ?? false;
     maxHeight = saved.maxHeight ?? 0;
     codec = saved.codec ?? 'auto';
+    updateYtdlp(); // 앱을 열 때마다 yt-dlp 최신 버전 확인
     (async () => {
       outDir = saved.outDir ?? (await join(await downloadDir(), 'cut-dlp'));
     })();
@@ -109,6 +151,16 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function pasteAndLoad() {
+    try {
+      url = (await navigator.clipboard.readText()).trim();
+    } catch {
+      error = '클립보드를 읽을 수 없습니다. 주소를 직접 붙여넣어 주세요.';
+      return;
+    }
+    if (url) load();
   }
 
   async function pickDir() {
@@ -227,7 +279,16 @@
 
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
+    if (e.key === 'Escape') {
+      showHelp = false;
+      return;
+    }
     if (t.closest('input, select, textarea')) return;
+    if (e.key === '?') {
+      showHelp = !showHelp;
+      e.preventDefault();
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey || !info) return;
     const step = e.shiftKey ? 1 : 5;
     switch (e.code) {
@@ -256,6 +317,7 @@
         loop = !loop;
         break;
       case 'Enter':
+      case 'NumpadEnter':
         if (t.closest('button')) return;
         addSegment();
         break;
@@ -269,14 +331,29 @@
 <svelte:window onkeydown={onKey} />
 
 <main>
-  <header>
+  <header class="bar">
+    <i class="ti ti-link icon"></i>
     <input
       class="url"
       placeholder="YouTube 주소를 붙여넣고 Enter"
       bind:value={url}
       onkeydown={(e) => e.key === 'Enter' && load()}
     />
-    <button onclick={load} disabled={loading || !url.trim()}>{loading ? '불러오는 중…' : '불러오기'}</button>
+    {#if info}<span class="meta">{info.channel} · {fmt(info.duration, 0)}</span>{/if}
+    <button onclick={load} disabled={loading || ytBusy || !url.trim()}>{loading ? '불러오는 중…' : '불러오기'}</button>
+    <button
+      class="yt"
+      class:bad={!!yt.error}
+      onclick={updateYtdlp}
+      disabled={ytBusy || running}
+      title={yt.error ? `${yt.error}\n눌러서 다시 확인` : '눌러서 yt-dlp 업데이트 확인'}
+    >
+      <i class="ti {ytBusy ? 'ti-loader-2 spin' : yt.error ? 'ti-alert-triangle' : 'ti-circle-check'}"></i>
+      {#if ytBusy}yt-dlp 확인 중…{:else if yt.error}yt-dlp {yt.version ?? ''} · 확인 실패{:else}yt-dlp {yt.version}{yt.updated ? ' (업데이트됨)' : ''}{/if}
+    </button>
+    <button class="icon-btn" onclick={() => (showHelp = true)} title="단축키 (?)" aria-label="단축키">
+      <i class="ti ti-keyboard"></i>
+    </button>
   </header>
   {#if error}<p class="err">{error}</p>{/if}
 
@@ -286,15 +363,21 @@
         <h2 title={info.title}>{info.title}</h2>
         <Player bind:this={player} videoId={info.id} ontime={onTime} onstate={(p) => (playing = p)} />
         <div class="time">
+          <button class="icon-btn" onclick={() => player.toggle()} aria-label="재생/일시정지">
+            <i class="ti {playing ? 'ti-player-pause' : 'ti-player-play'}"></i>
+          </button>
           <b>{fmt(now, 2)}</b> / {fmt(info.duration, 0)}
           <span class="grow"></span>
-          <button onclick={() => player.toggle()}>{playing ? '일시정지' : '재생'}</button>
+          <label class="loop"><input type="checkbox" bind:checked={loop} /> 구간 반복 <kbd>\</kbd></label>
         </div>
+
         <Timeline
           duration={info.duration}
           {now}
+          {playing}
           {start}
           {end}
+          clips={segs}
           onseek={(t) => player.seek(t)}
           onstart={(t) => {
             setStart(t);
@@ -307,102 +390,143 @@
         />
 
         <div class="range">
-          <button class="s" onclick={() => setStart(player.time())}><kbd>Q</kbd> 시작 <b>{fmt(start, 2)}</b></button>
-          <button class="e" onclick={() => setEnd(player.time())}><kbd>W</kbd> 끝 <b>{fmt(end, 2)}</b></button>
-          <span class="dur">{valid ? `길이 ${fmt(end! - start!, 2)}` : ''}</span>
+          <button class="s" onclick={() => setStart(player.time())}>
+            <kbd>Q</kbd> 시작 <b>{fmt(start, 2)}</b>
+          </button>
+          <i class="ti ti-arrow-right muted"></i>
+          <button class="e" onclick={() => setEnd(player.time())}>
+            <kbd>W</kbd> 끝 <b>{fmt(end, 2)}</b>
+          </button>
+          <span class="dur">{valid ? `${fmt(end! - start!, 1)}초` : ''}</span>
           <span class="grow"></span>
-          <button onclick={preview} disabled={!valid}>구간 미리보기</button>
-          <label><input type="checkbox" bind:checked={loop} /> 반복</label>
-          <button class="primary" onclick={addSegment} disabled={!valid}>큐에 추가 (Enter)</button>
+          <button onclick={preview} disabled={!valid}>
+            <i class="ti ti-player-play"></i> 미리보기
+          </button>
+          <button class="add" onclick={addSegment} disabled={!valid}>
+            클립 추가 <kbd>Enter</kbd>
+          </button>
         </div>
-
-        <p class="keys">
-          <kbd>Q</kbd> 시작 · <kbd>W</kbd> 끝 · <kbd>Space</kbd> 재생 · <kbd>←</kbd><kbd>→</kbd> 5초
-          (<kbd>Shift</kbd> 1초) · <kbd>,</kbd><kbd>.</kbd> 1프레임 · <kbd>\</kbd> 반복 ·
-          <kbd>Enter</kbd> 큐 추가 · 핸들 드래그 시 영상 위치 동기화 (<kbd>Shift</kbd> 누르고 드래그하면 미세 조절)
-        </p>
       {:else}
-        <div class="hint">
+        <div class="empty-main">
+          <i class="ti ti-scissors big"></i>
           <h2>필요한 구간만 다운로드</h2>
-          <p>YouTube 주소를 불러온 뒤, 재생하면서 <kbd>Q</kbd>로 시작, <kbd>W</kbd>로 끝 지점을 찍으세요.</p>
+          <p>
+            영상을 불러온 뒤 재생하면서 <kbd>Q</kbd>로 시작, <kbd>W</kbd>로 끝 지점을 찍으세요.
+            지정한 구간만 받아서 용량과 시간을 아낍니다.
+          </p>
+          <button class="primary" onclick={pasteAndLoad}>
+            <i class="ti ti-clipboard"></i> 클립보드의 주소 불러오기
+          </button>
         </div>
       {/if}
     </section>
 
     <aside>
-      <h3>다운로드 큐</h3>
-      <div class="opts">
-        <label>저장 폴더
-          <div class="dir"><input readonly value={outDir} title={outDir} /><button onclick={pickDir}>…</button></div>
-        </label>
-        <label><input type="checkbox" bind:checked={audioOnly} /> 오디오만 (mp3)</label>
-        {#if !audioOnly}
-          <label>코덱
-            <select bind:value={codec}>
-              <option value="auto">자동 (제공되는 그대로)</option>
-              <option value="h264">H.264 (호환성 최고)</option>
-              <option value="vp9">VP9</option>
-              <option value="av1">AV1</option>
-            </select>
-          </label>
-          {#if info}
-            <p class="note">
-              이 영상 제공 코덱: {offered.join(', ') || '확인 불가'}
-              {#if willEncode}
-                <br /><b>{CODEC_LABEL[codec]} 미제공 → 받은 뒤 인코딩합니다 (시간이 더 걸립니다)</b>
-              {/if}
-            </p>
-          {/if}
-          <label>최대 화질
-            <select bind:value={maxHeight}>
-              <option value={0}>최고 화질 (자동)</option>
-              {#each [360, 480, 720, 1080, 1440, 2160] as h}<option value={h}>{h}p 이하</option>{/each}
-            </select>
-          </label>
-        {/if}
-        <label title="끄면 키프레임 단위로 잘라 더 빠르지만 시작/끝이 몇 초 어긋날 수 있음">
-          <input type="checkbox" bind:checked={accurate} /> 정확한 컷 (구간만 재인코딩)
-        </label>
+      <div class="ahead">
+        <h3>클립 ({segs.length})</h3>
       </div>
+
+      <button class="summary" onclick={() => (showSettings = !showSettings)} aria-expanded={showSettings}>
+        <i class="ti ti-adjustments"></i>
+        <span class="grow">{summary}</span>
+        <i class="ti {showSettings ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+      </button>
+
+      {#if showSettings}
+        <div class="opts">
+          <label class="check"><input type="checkbox" bind:checked={audioOnly} /> 오디오만 (mp3)</label>
+          {#if !audioOnly}
+            <label>코덱
+              <select bind:value={codec}>
+                <option value="auto">자동 (제공되는 그대로)</option>
+                <option value="h264">H.264 (호환성 최고)</option>
+                <option value="vp9">VP9</option>
+                <option value="av1">AV1</option>
+              </select>
+            </label>
+            {#if info}
+              <p class="note">
+                이 영상 제공 코덱: {offered.join(', ') || '확인 불가'}
+                {#if willEncode}
+                  <br /><b>{CODEC_LABEL[codec]} 미제공 → 받은 뒤 인코딩합니다 (시간이 더 걸립니다)</b>
+                {/if}
+              </p>
+            {/if}
+            <label>최대 화질
+              <select bind:value={maxHeight}>
+                <option value={0}>최고 화질 (자동)</option>
+                {#each [360, 480, 720, 1080, 1440, 2160] as h}<option value={h}>{h}p 이하</option>{/each}
+              </select>
+            </label>
+          {/if}
+          <label class="check" title="끄면 키프레임 단위로 잘라 더 빠르지만 시작/끝이 몇 초 어긋날 수 있음">
+            <input type="checkbox" bind:checked={accurate} /> 정확한 컷 (구간만 재인코딩)
+          </label>
+        </div>
+      {/if}
 
       <ul>
         {#each segs as s (s.id)}
           <li class={s.status}>
             <div class="row">
-              <span class="t">{fmt(s.start, 1)} → {fmt(s.end, 1)}</span>
-              <span class="len">({fmt(s.end - s.start, 1)})</span>
+              <span class="t">{fmt(s.start, 1)} – {fmt(s.end, 1)}</span>
+              <span class="len">{fmt(s.end - s.start, 1)}초</span>
               <span class="grow"></span>
               {#if s.status === 'done' && s.file}
-                <button onclick={() => revealItemInDir(s.file!)}>폴더</button>
+                <button class="mini" onclick={() => revealItemInDir(s.file!)}>폴더</button>
               {/if}
-              <button onclick={() => remove(s.id)} title="삭제">✕</button>
+              <button class="mini" onclick={() => remove(s.id)} title="삭제" aria-label="삭제">
+                <i class="ti ti-x"></i>
+              </button>
             </div>
             <div class="name" title={s.title}>{s.title}</div>
             {#if s.status === 'running'}
-              <div class="st">{s.phase === 'encode' ? '인코딩 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
+              <div class="st run">{s.phase === 'encode' ? '인코딩 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
               <progress max="100" value={s.percent}></progress>
             {:else if s.status === 'error'}
               <div class="err">{s.error}</div>
             {:else}
-              <div class="st">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}</div>
+              <div class="st {s.status}">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}</div>
             {/if}
           </li>
         {:else}
-          <li class="empty">구간을 지정하고 Enter로 추가하세요</li>
+          <li class="empty">
+            <i class="ti ti-playlist-add big"></i>
+            <div>구간을 지정하고 <kbd>Enter</kbd>로 추가하세요</div>
+          </li>
         {/each}
       </ul>
 
       {#if running}
         <button class="danger" onclick={cancelAll}>중지</button>
       {:else}
-        <button
-          class="primary"
-          onclick={runQueue}
-          disabled={!segs.some((s) => ['pending', 'error', 'cancelled'].includes(s.status))}
-        >다운로드 시작</button>
+        <button class="primary" onclick={runQueue} disabled={pendingCount === 0 || ytBusy}>
+          {pendingCount > 0 ? `클립 ${pendingCount}개 다운로드` : '다운로드'}
+        </button>
       {/if}
+      <button class="folder" onclick={pickDir} title={outDir}>
+        <i class="ti ti-folder"></i><span>{outDir}</span>
+      </button>
     </aside>
   </div>
+
+  {#if showHelp}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="backdrop" onclick={() => (showHelp = false)}>
+      <div class="help" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1" aria-label="단축키">
+        <h3>단축키</h3>
+        <table>
+          <tbody>
+            {#each SHORTCUTS as [k, d]}
+              <tr><td><kbd>{k}</kbd></td><td>{d}</td></tr>
+            {/each}
+          </tbody>
+        </table>
+        <p class="note">타임라인: 휠로 확대/축소, 핸들을 끌면 영상이 따라가고 Shift+드래그는 미세 조절입니다.</p>
+        <button onclick={() => (showHelp = false)}>닫기 <kbd>Esc</kbd></button>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -413,7 +537,6 @@
     --text: #1c2333;
     --muted: #6b7690;
     --accent: #2563eb;
-    --start: #2563eb;
     --end: #ea580c;
     --ok: #16a34a;
     --bad: #dc2626;
@@ -431,24 +554,54 @@
     color: inherit;
   }
   main {
-    padding: 16px 20px;
+    padding: 14px 18px;
     height: 100vh;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 12px;
   }
-  header {
+  .bar {
     display: flex;
+    align-items: center;
     gap: 8px;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
-    padding: 10px;
+    padding: 8px 10px;
     box-shadow: 0 1px 3px rgba(20, 30, 60, 0.06);
   }
-  .url {
+  .bar .icon {
+    color: var(--muted);
+    font-size: 17px;
+  }
+  .bar .url {
     flex: 1;
+    border: 0;
+    box-shadow: none;
+    padding-left: 2px;
+  }
+  button.yt {
+    font-size: 12px;
+    padding: 4px 9px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  button.yt.bad {
+    color: var(--bad);
+  }
+  :global(.spin) {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .meta {
+    color: var(--muted);
+    white-space: nowrap;
+    font-size: 13px;
   }
   input:not([type='checkbox']),
   select {
@@ -463,6 +616,9 @@
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
   }
+  .bar .url:focus {
+    box-shadow: none;
+  }
   input[type='checkbox'] {
     accent-color: var(--accent);
   }
@@ -473,6 +629,10 @@
     padding: 7px 14px;
     cursor: pointer;
     transition: background 0.12s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
   button:hover:not(:disabled) {
     background: #eef1f7;
@@ -496,80 +656,82 @@
     color: #fff;
     font-weight: 600;
   }
+  .icon-btn {
+    padding: 6px 9px;
+    font-size: 16px;
+  }
   .cols {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 350px;
-    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    gap: 14px;
     flex: 1;
     min-height: 0;
   }
   .left {
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     padding-right: 2px;
   }
   h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 16px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .time,
-  .range {
+  .time {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
-  }
-  .time {
     font-variant-numeric: tabular-nums;
     color: var(--muted);
   }
   .time b {
     color: var(--text);
-    font-size: 16px;
+    font-size: 15px;
+  }
+  .loop {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
   }
   .grow {
     flex: 1;
   }
   .range {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
-    padding: 10px;
+    padding: 9px 10px;
     box-shadow: 0 1px 3px rgba(20, 30, 60, 0.06);
   }
   .range .s {
-    border-color: var(--start);
+    border-color: var(--accent);
     background: rgba(37, 99, 235, 0.07);
   }
   .range .e {
     border-color: var(--end);
     background: rgba(234, 88, 12, 0.07);
   }
+  .range .add {
+    border-color: var(--text);
+    font-weight: 600;
+  }
   .range b {
     font-variant-numeric: tabular-nums;
-    margin-left: 4px;
+    font-weight: 600;
   }
+  .muted,
   .dur {
     color: var(--muted);
-  }
-  .keys {
-    color: var(--muted);
-    font-size: 12px;
-    margin: 0;
-  }
-  .hint {
-    margin: auto;
-    text-align: center;
-    color: var(--muted);
-  }
-  .hint h2 {
-    color: var(--text);
-    margin-bottom: 6px;
   }
   kbd {
     background: #fff;
@@ -580,14 +742,35 @@
     font: 12px 'Cascadia Mono', monospace;
     color: var(--text);
   }
+  .empty-main {
+    margin: auto;
+    max-width: 380px;
+    text-align: center;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .empty-main h2 {
+    color: var(--text);
+    font-size: 19px;
+  }
+  .empty-main p {
+    margin: 0 0 6px;
+  }
+  .big {
+    font-size: 34px;
+    color: #a4afc4;
+  }
   aside {
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
-    padding: 14px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     min-height: 0;
     box-shadow: 0 1px 3px rgba(20, 30, 60, 0.06);
   }
@@ -595,12 +778,19 @@
     margin: 0;
     font-size: 15px;
   }
+  .summary {
+    background: #f4f6fa;
+    font-size: 12.5px;
+    color: var(--muted);
+    justify-content: flex-start;
+    padding: 6px 10px;
+  }
   .opts {
     display: flex;
     flex-direction: column;
     gap: 8px;
     font-size: 13px;
-    padding-bottom: 12px;
+    padding: 4px 2px 10px;
     border-bottom: 1px solid var(--line);
   }
   .opts label {
@@ -609,7 +799,7 @@
     gap: 4px;
     color: var(--muted);
   }
-  .opts label:has(input[type='checkbox']) {
+  .opts label.check {
     flex-direction: row;
     align-items: center;
     gap: 6px;
@@ -624,14 +814,6 @@
     color: var(--end);
     font-weight: 600;
   }
-  .dir {
-    display: flex;
-    gap: 4px;
-  }
-  .dir input {
-    flex: 1;
-    min-width: 0;
-  }
   ul {
     list-style: none;
     margin: 0;
@@ -640,14 +822,12 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
   }
   li {
-    background: #f8f9fc;
     border: 1px solid var(--line);
-    border-left: 4px solid var(--accent);
-    border-radius: 8px;
-    padding: 8px 10px;
+    border-left: 3px solid var(--accent);
+    padding: 7px 10px;
   }
   li.done {
     border-left-color: var(--ok);
@@ -659,11 +839,14 @@
     border-left-color: var(--muted);
   }
   li.empty {
-    background: none;
     border: 0;
     color: var(--muted);
     text-align: center;
-    padding: 24px 0;
+    padding: 28px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
   }
   .row {
     display: flex;
@@ -674,14 +857,20 @@
   .row .t {
     font-weight: 600;
   }
-  .row button {
-    padding: 1px 8px;
+  .mini {
+    padding: 1px 7px;
     font-size: 12px;
   }
   .len,
   .st {
     color: var(--muted);
     font-size: 12px;
+  }
+  .st.done {
+    color: var(--ok);
+  }
+  .st.run {
+    color: var(--accent);
   }
   .name {
     font-size: 12px;
@@ -692,12 +881,56 @@
   }
   progress {
     width: 100%;
-    height: 6px;
+    height: 5px;
     accent-color: var(--accent);
   }
   .err {
     color: var(--bad);
     font-size: 12px;
     word-break: break-all;
+    margin: 0;
+  }
+  .folder {
+    justify-content: flex-start;
+    font-size: 12px;
+    color: var(--muted);
+    border: 0;
+    background: none;
+    padding: 2px 4px;
+  }
+  .folder span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+  }
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 30, 60, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  .help {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 18px 22px;
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 12px 40px rgba(20, 30, 60, 0.25);
+  }
+  .help table {
+    border-collapse: collapse;
+  }
+  .help td {
+    padding: 4px 0;
+  }
+  .help td:first-child {
+    width: 90px;
   }
 </style>
