@@ -147,7 +147,7 @@ jobs:
             --enable-parser=h264,vp9,av1,aac,opus,vorbis,mpegaudio,flac
 
             # 디코더 (구간 정확 컷과 코덱 변환에 필요)
-            --enable-decoder=h264,vp9,libaom_av1,aac,opus,vorbis,mp3,flac,pcm_s16le
+            --enable-decoder=h264,vp9,libaom_av1,aac,opus,vorbis,mp3,flac,pcm_s16le,wrapped_avframe,rawvideo
 
             # 인코더
             --enable-encoder=libopenh264,libvpx_vp9,libaom_av1,libopus,aac,libmp3lame
