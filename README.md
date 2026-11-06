@@ -1,6 +1,6 @@
 # slice-youtube
 
-YouTube 영상에서 **필요한 구간만** 골라 받는 Windows · Linux 데스크톱 앱.
+YouTube 영상에서 **필요한 구간만** 골라 받는 Windows · Linux · macOS 데스크톱 앱.
 Tauri 2 · Svelte 5 · yt-dlp
 
 ## 주요 기능
@@ -17,6 +17,9 @@ Tauri 2 · Svelte 5 · yt-dlp
 - `slice-youtube_<버전>_x64-setup.exe` — 설치 파일
 - `slice-youtube-<버전>-portable-x64.zip` — 압축만 풀면 실행되는 포터블 버전
 - `slice-youtube_<버전>_amd64.AppImage` — Linux (x86_64)
+- `slice-youtube_<버전>_aarch64.dmg` — macOS (Apple Silicon)
+
+> macOS 빌드는 Apple 개발자 서명/공증 없이 배포되므로, 처음 실행 시 "확인되지 않은 개발자" 경고가 뜹니다. 시스템 설정 → 개인정보 보호 및 보안에서 "그래도 열기"를 누르거나, 터미널에서 `xattr -dr com.apple.quarantine /Applications/slice-youtube.app` 을 실행하세요.
 
 ## 사용법
 
@@ -70,6 +73,18 @@ bash scripts/verify-build-linux.sh   # 결과물 검증 (선택)
 ```
 
 - AppImage: `src-tauri/target/release/bundle/appimage/slice-youtube_<버전>_amd64.AppImage`
+
+### macOS (Apple Silicon, macOS 14 이상)
+
+```bash
+pnpm install
+pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno 받기 (PowerShell 7 필요: brew install powershell)
+bash scripts/build-ffmpeg-macos.sh   # ffmpeg 9.0.2 빌드 (Homebrew 필요)
+pnpm tauri build                     # .app / .dmg
+bash scripts/verify-build-macos.sh   # 결과물 검증 (선택)
+```
+
+- DMG: `src-tauri/target/release/bundle/dmg/slice-youtube_<버전>_aarch64.dmg`
 
 ### 참고
 

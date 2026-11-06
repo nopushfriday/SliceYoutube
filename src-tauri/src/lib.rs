@@ -260,13 +260,16 @@ fn selected_height(formats: &[FormatInfo], cap: u32, codec: Option<&str>) -> u32
 }
 
 /// 하드웨어 H.264 인코더 후보 (우선순위 순). QSV는 별도 라이브러리가 필요해 Media Foundation이 대신한다.
-const HW_CANDIDATES: [&str; 3] = ["h264_nvenc", "h264_amf", "h264_mf"];
+/// (macOS 는 VideoToolbox 하나만 쓴다)
+const HW_CANDIDATES: [&str; 4] = ["h264_nvenc", "h264_amf", "h264_mf", "h264_videotoolbox"];
 
 /// 하드웨어 인코더 인자 (비트레이트 기준)
 fn hw_h264_args(enc: &str, bitrate: &str) -> Vec<String> {
     let v: Vec<&str> = match enc {
         "h264_nvenc" => vec!["-c:v", enc, "-preset", "p5", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
         "h264_amf" => vec!["-c:v", enc, "-quality", "quality", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
+        // -allow_sw 0: 하드웨어 인코더를 쓸 수 없으면 실패시켜 소프트웨어로 대체되게 한다
+        "h264_videotoolbox" => vec!["-c:v", enc, "-allow_sw", "0", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
         // hw_encoding=1: 하드웨어 변환기가 없으면 실패시켜 소프트웨어로 대체되게 한다
         _ => vec!["-c:v", enc, "-hw_encoding", "1", "-b:v", bitrate],
     };

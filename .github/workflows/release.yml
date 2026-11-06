@@ -64,6 +64,10 @@ jobs:
             os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
             ext: ''
+          - name: macos
+            os: macos-14
+            triple: aarch64-apple-darwin
+            ext: ''
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +130,10 @@ jobs:
         if: matrix.name == 'linux'
         run: bash scripts/verify-build-linux.sh "${{ needs.prepare.outputs.version }}"
 
+      - name: 빌드 결과 검증 (macOS)
+        if: matrix.name == 'macos'
+        run: bash scripts/verify-build-macos.sh "${{ needs.prepare.outputs.version }}"
+
       - name: 배포 파일 업로드
         uses: actions/upload-artifact@v4
         with:
@@ -135,6 +143,7 @@ jobs:
             src-tauri/target/release/bundle/nsis/*-setup.exe
             dist/*.zip
             src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/dmg/*.dmg
 
   publish:
     needs: [prepare, build]
@@ -155,7 +164,7 @@ jobs:
           mapfile -t FILES < <(find release-files -type f | sort)
           ls -l "${FILES[@]}"
           # 설치 파일, 포터블 zip, AppImage 가 모두 있어야 한다
-          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage'; do
+          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage' '*.dmg'; do
             [ -n "$(find release-files -type f -name "$pat" -print -quit)" ] || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
           done
           VER="${{ needs.prepare.outputs.version }}"
