@@ -25,7 +25,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "appimage"],
     "windows": {
       "nsis": {
         "languages": ["Korean", "English"]

@@ -1,4 +1,4 @@
-# 버전 태그(v0.1.0 등)를 푸시하면 설치 파일(NSIS)과 포터블 zip 을 빌드해 GitHub Release 로 게시한다.
+# 버전 태그(v0.1.0 등)를 푸시하면 Windows(설치 파일 NSIS + 포터블 zip)와 Linux(AppImage)를 빌드해 GitHub Release 로 게시한다.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
@@ -13,13 +13,25 @@ permissions:
   contents: write
 
 jobs:
-  # 경량 LGPL ffmpeg 를 빌드해 아티팩트로 넘긴다. (같은 버전/설정의 캐시가 있으면 빌드 생략)
+  # 경량 LGPL ffmpeg 를 OS 별로 빌드해 아티팩트로 넘긴다. (같은 버전/설정의 캐시가 있으면 빌드 생략)
   ffmpeg:
     uses: ./.github/workflows/build-ffmpeg.yml
 
   build:
     needs: ffmpeg
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            triple: x86_64-pc-windows-msvc
+            ext: .exe
+          - name: linux
+            os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+            ext: ''
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +45,16 @@ jobs:
             echo "::error::태그($GITHUB_REF_NAME)와 tauri.conf.json 의 version($VER)이 다릅니다."
             exit 1
           fi
+          # package.json, Cargo.toml 도 같은 버전이어야 한다
+          [ "$(node -p "require('./package.json').version")" = "$VER" ] || { echo "::error::package.json version 불일치"; exit 1; }
+          grep -qE "^version = \"$VER\"" src-tauri/Cargo.toml || { echo "::error::Cargo.toml version 불일치"; exit 1; }
+
+      - name: Tauri 빌드 의존성 (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file
 
       - uses: pnpm/action-setup@v4
         with:
@@ -59,29 +81,65 @@ jobs:
       - name: ffmpeg 받기 (위 job 의 아티팩트)
         uses: actions/download-artifact@v4
         with:
-          name: ffmpeg
+          name: ffmpeg-${{ matrix.name }}
           path: ffmpeg-dl
 
       - name: ffmpeg 배치
         shell: bash
-        run: cp ffmpeg-dl/ffmpeg-x86_64-pc-windows-msvc.exe src-tauri/binaries/
+        run: |
+          cp "ffmpeg-dl/ffmpeg-${{ matrix.triple }}${{ matrix.ext }}" src-tauri/binaries/
+          chmod +x src-tauri/binaries/* || true
 
-      - name: 빌드 (설치 파일)
+      - name: 빌드
         run: pnpm tauri build
 
       - name: 포터블 zip 만들기
+        if: matrix.name == 'windows'
         shell: pwsh
         run: pwsh scripts/make-portable.ps1 -Version "${{ steps.ver.outputs.version }}"
 
+      - name: 빌드 결과 검증 (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: pwsh scripts/verify-build.ps1 -Version "${{ steps.ver.outputs.version }}"
+
+      - name: 빌드 결과 검증 (Linux)
+        if: matrix.name == 'linux'
+        run: bash scripts/verify-build-linux.sh "${{ steps.ver.outputs.version }}"
+
+      - name: 배포 파일 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            dist/*.zip
+            src-tauri/target/release/bundle/appimage/*.AppImage
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-files
+
       - name: 릴리스 게시
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          FILES=(src-tauri/target/release/bundle/nsis/*-setup.exe dist/*.zip)
-          if [ ${#FILES[@]} -lt 2 ]; then echo "::error::배포 파일이 부족합니다: ${FILES[*]}"; exit 1; fi
+          FILES=(release-files/*)
           ls -l "${FILES[@]}"
+          # 설치 파일, 포터블 zip, AppImage 가 모두 있어야 한다
+          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage'; do
+            compgen -G "release-files/$pat" >/dev/null || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
+          done
+          VER="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" "${FILES[@]}" \
-            --title "slice-youtube ${{ steps.ver.outputs.version }}" \
+            --title "slice-youtube $VER" \
             --generate-notes

@@ -1,6 +1,6 @@
 # slice-youtube
 
-YouTube 영상에서 **필요한 구간만** 골라 받는 Windows 데스크톱 앱.
+YouTube 영상에서 **필요한 구간만** 골라 받는 Windows · Linux 데스크톱 앱.
 Tauri 2 · Svelte 5 · yt-dlp
 
 ## 주요 기능
@@ -16,6 +16,7 @@ Tauri 2 · Svelte 5 · yt-dlp
 
 - `slice-youtube_<버전>_x64-setup.exe` — 설치 파일
 - `slice-youtube-<버전>-portable-x64.zip` — 압축만 풀면 실행되는 포터블 버전
+- `slice-youtube_<버전>_amd64.AppImage` — Linux (x86_64)
 
 ## 사용법
 
@@ -40,38 +41,39 @@ Tauri 2 · Svelte 5 · yt-dlp
 
 - AV1 인코딩(영상이 AV1을 제공하지 않을 때의 폴백)은 libaom을 쓰므로 H.264/VP9보다 느립니다.
 
-## 개발
+## 빌드
 
 필요: Node.js, pnpm, Rust
 
-```powershell
-pnpm install
-pwsh scripts/fetch-binaries.ps1   # src-tauri/binaries 에 yt-dlp, deno 준비
-bash scripts/build-ffmpeg.sh      # ffmpeg 직접 빌드 (MSYS2 MINGW64 셸, 아래 참고)
-pnpm tauri dev
-```
-
-ffmpeg는 받지 않고 직접 빌드합니다. [빌드](#빌드) 참고.
-
-### 빌드
-
-sidecar 바이너리가 없으면 먼저 준비한 뒤 빌드합니다. ffmpeg는 받지 않고 직접 빌드하며, 이를 위해 [MSYS2](https://www.msys2.org/)가 필요합니다.
+sidecar 바이너리는 git에 없으므로, 실행·빌드 전에 먼저 준비합니다.
 
 ```powershell
 pnpm install
-pwsh scripts/fetch-binaries.ps1                  # yt-dlp, deno
-pnpm tauri build
-pwsh scripts/make-portable.ps1 -Version <버전>   # 포터블 zip (선택)
+pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno
+pwsh scripts/build-ffmpeg-win.ps1    # ffmpeg 9.0.2 (Windows)
 ```
 
 ```bash
-# MSYS2 MINGW64 셸에서, pnpm tauri build 전에 실행
-bash scripts/build-ffmpeg.sh            # ffmpeg 9.0.2, 하드웨어 인코더 포함
-bash scripts/build-ffmpeg.sh 9.0.2 sw   # 버전, hw|sw 지정
+# Linux (Debian/Ubuntu 계열, sudo 필요)
+pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno
+bash scripts/build-ffmpeg-linux.sh   # ffmpeg 9.0.2
 ```
 
-`build-ffmpeg.sh`는 의존 패키지 설치부터 빌드·검증까지 하고, 결과를 `src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe`에 둡니다.
+Linux에서 Tauri를 빌드하려면 [시스템 의존 패키지](https://v2.tauri.app/start/prerequisites/#linux)도 필요합니다.
+
+`-Version`, `-Hw sw`(하드웨어 인코더 제외)로 버전과 구성을 바꿀 수 있습니다.
 configure 옵션은 [`build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml)과 같으니, 한쪽을 바꾸면 다른 쪽도 바꾸세요.
+
+준비가 끝나면 실행하거나 빌드합니다.
+
+```powershell
+pnpm tauri dev
+```
+
+```powershell
+pnpm tauri build
+pwsh scripts/make-portable.ps1 -Version <버전>   # 포터블 zip (선택)
+```
 
 ## 서드파티
 

@@ -2,7 +2,7 @@
 #
 #  - 이 앱에 필요한 기능만 켠 정적 ffmpeg.exe 를 만들어 아티팩트(ffmpeg)로 올린다.
 #  - 앱 빌드와 분리되어 있어 한 번 만들어 두면 계속 재사용한다. (같은 버전/설정의 캐시가 있으면 다시 빌드하지 않음)
-#  - 받아서 쓰는 법: release 워크플로가 같은 실행 안에서 아티팩트를 받는다. 로컬은 scripts/build-ffmpeg.sh
+#  - 받아서 쓰는 법: release 워크플로가 같은 실행 안에서 아티팩트를 받는다. 로컬은 scripts/build-ffmpeg-win.sh
 #
 # 라이선스
 #  - --enable-gpl / --enable-nonfree 를 쓰지 않는다. (libx264 미사용)
@@ -47,7 +47,7 @@ env:
   CONFIG_REV: '1'
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           HW=${{ inputs.hwaccel && 'hw' || 'sw' }}
-          echo "tag=ffmpeg-${{ inputs.ffmpeg_version }}-lgpl-${HW}-r${CONFIG_REV}" >> "$GITHUB_OUTPUT"
+          echo "tag=ffmpeg-win-${{ inputs.ffmpeg_version }}-lgpl-${HW}-r${CONFIG_REV}" >> "$GITHUB_OUTPUT"
 
       # 같은 버전/설정으로 만든 결과가 캐시에 있으면 재사용하고, 없으면(만료 포함) 다시 빌드한다.
       - name: 이전 빌드 결과 확인
@@ -225,6 +225,58 @@ jobs:
       - name: 아티팩트 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg
+          name: ffmpeg-windows
+          path: dist/*
+          retention-days: 30
+
+  # Linux x86_64 (glibc 호환을 위해 오래된 LTS 러너에서 빌드)
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 이전 빌드 결과 확인
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist
+          key: ${{ inputs.force && format('ffmpeg-linux-{0}-r{1}-{2}', inputs.ffmpeg_version, env.CONFIG_REV, github.run_id) || format('ffmpeg-linux-{0}-r{1}', inputs.ffmpeg_version, env.CONFIG_REV) }}
+
+      - name: 빌드 (configure, make, 검증)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-ffmpeg-linux.sh "${{ inputs.ffmpeg_version }}"
+
+      - name: 검증 (라이선스, 의존 라이브러리)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          F=src-tauri/binaries/ffmpeg-x86_64-unknown-linux-gnu
+          # 시스템 기본 라이브러리(libc 등) 외에 따로 설치해야 하는 .so 에 의존하면 안 된다
+          echo "--- 의존 라이브러리"; ldd "$F"
+          if ldd "$F" | grep -Ei 'libopenh264|libvpx|libaom|libopus|libmp3lame'; then
+            echo "코덱 라이브러리가 동적 링크되어 있습니다 (정적 링크 필요)"; exit 1
+          fi
+          # 모든 인코더가 들어 있는지
+          ENC=$("$F" -hide_banner -encoders)
+          for e in libopenh264 libvpx-vp9 libaom-av1 libopus aac libmp3lame; do
+            echo "$ENC" | grep -q " $e " || { echo "인코더 없음: $e"; exit 1; }
+          done
+
+      - name: 결과 파일 준비
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir dist
+          cp src-tauri/binaries/ffmpeg-x86_64-unknown-linux-gnu dist/
+          cp .ffmpeg-build/ffmpeg-${{ inputs.ffmpeg_version }}.tar.gz dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.gz
+          {
+            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, linux x86_64, cut-dlp 전용 구성)"
+            echo "config rev: ${CONFIG_REV}"
+            echo; cat .ffmpeg-build/version-linux.txt
+          } > dist/BUILD-INFO-linux.txt
+
+      - name: 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-linux
           path: dist/*
           retention-days: 30

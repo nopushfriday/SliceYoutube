@@ -75,7 +75,7 @@ fn base_args() -> Result<Vec<String>, String> {
         "--ffmpeg-location".to_string(),
         dir.to_string_lossy().into_owned(),
     ];
-    let deno = dir.join("deno.exe");
+    let deno = dir.join(format!("deno{}", std::env::consts::EXE_SUFFIX));
     a.push("--js-runtimes".into());
     a.push(if deno.exists() {
         format!("deno:{}", deno.display())
@@ -93,7 +93,7 @@ fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())?
         .join("bin");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("yt-dlp.exe"))
+    Ok(dir.join(format!("yt-dlp{}", std::env::consts::EXE_SUFFIX)))
 }
 
 async fn version_of(app: &AppHandle, path: &Path) -> Option<String> {
@@ -112,7 +112,7 @@ async fn version_of(app: &AppHandle, path: &Path) -> Option<String> {
 /// 갱신 가능한 복사본을 보장한다. 없거나 번들본이 더 최신이면 번들본으로 (다시) 복사한다.
 async fn ensure_ytdlp(app: &AppHandle) -> Result<PathBuf, String> {
     let path = ytdlp_path(app)?;
-    let bundled = bundled_dir()?.join("yt-dlp.exe");
+    let bundled = bundled_dir()?.join(format!("yt-dlp{}", std::env::consts::EXE_SUFFIX));
     let need_copy = if !path.exists() {
         true
     } else {
@@ -733,4 +733,32 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_codec_names() {
+        assert_eq!(norm_codec("avc1.640028"), Some("h264"));
+        assert_eq!(norm_codec("vp09.00.40.08"), Some("vp9"));
+        assert_eq!(norm_codec("av01.0.08M.08"), Some("av1"));
+        assert_eq!(norm_codec("none"), None);
+    }
+
+    #[test]
+    fn codec_prefix_matches_normalized_names() {
+        for codec in ["h264", "vp9", "av1"] {
+            let prefix = codec_prefix(codec);
+            assert_eq!(norm_codec(prefix), Some(codec));
+        }
+    }
+
+    #[test]
+    fn formats_time_tag_without_colons() {
+        assert_eq!(time_tag(90.5), "1m30s");
+        assert_eq!(time_tag(3725.0), "1h02m05s");
+        assert_eq!(time_tag(-3.0), "0m00s");
+    }
 }

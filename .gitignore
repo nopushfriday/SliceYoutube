@@ -12,7 +12,7 @@ vite.config.ts.timestamp-*
 # sidecar binaries (scripts/fetch-binaries.ps1 로 준비)
 src-tauri/binaries/*.exe
 
-# 로컬 ffmpeg 빌드 작업 폴더 (scripts/build-ffmpeg.sh)
+# 로컬 ffmpeg 빌드 작업 폴더 (scripts/build-ffmpeg-*.sh)
 /.ffmpeg-build/
 
 # 배포 산출물

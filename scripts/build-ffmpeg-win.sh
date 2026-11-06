@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# 경량 LGPL ffmpeg 를 로컬에서 직접 빌드해 src-tauri/binaries 에 둔다.
-# MSYS2 의 "MINGW64" 셸에서 실행한다. (UCRT64/MSYS 셸 아님)
-#
-#   bash scripts/build-ffmpeg.sh [ffmpeg버전] [hw|sw]
+# Windows 용 경량 LGPL ffmpeg 를 직접 빌드해 src-tauri/binaries 에 둔다.
+# 보통은 래퍼를 쓴다:  pwsh scripts/build-ffmpeg-win.ps1 [-Version 9.0.2] [-Hw hw|sw]
+# 직접 실행하려면 MSYS2 "MINGW64" 셸에서:  bash scripts/build-ffmpeg-win.sh [ffmpeg버전] [hw|sw]
 #
 # configure 옵션은 .github/workflows/build-ffmpeg.yml 과 같아야 한다. 한쪽을 고치면 다른 쪽도 고친다.
 set -euo pipefail
@@ -14,7 +13,7 @@ HW="${2:-hw}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/.ffmpeg-build"
-OUT="$ROOT/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"   # Tauri sidecar 이름 규칙
+OUT="$ROOT/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"   # Tauri externalBin 은 <이름>-<타깃 트리플>.exe 를 요구한다 (패키징 때 ffmpeg.exe 로 설치됨)
 
 PKGS=(
   base-devel git make diffutils
