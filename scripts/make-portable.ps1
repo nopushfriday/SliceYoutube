@@ -1,11 +1,12 @@
 # 포터블 zip 을 만든다. (tauri build 이후 실행)
 #  zip 안: slice-youtube.exe + sidecar(yt-dlp, ffmpeg, deno) + README/라이선스 안내
-#  사용 예: pwsh scripts/make-portable.ps1 -Version 0.1.0
+#  사용 예: pwsh scripts/make-portable.ps1   (버전은 tauri.conf.json 에서 읽는다. -Version 으로 직접 지정 가능)
 param(
-  [Parameter(Mandatory)][string]$Version
+  [string]$Version
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if (-not $Version) { $Version = (Get-Content (Join-Path $root 'src-tauri	auri.conf.json') -Raw | ConvertFrom-Json).version }
 $rel = Join-Path $root 'src-tauri\target\release'
 $name = "slice-youtube-$Version-portable-x64"
 $out = Join-Path $root 'dist'

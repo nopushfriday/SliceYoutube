@@ -45,35 +45,38 @@ Tauri 2 · Svelte 5 · yt-dlp
 
 필요: Node.js, pnpm, Rust
 
-sidecar 바이너리는 git에 없으므로, 실행·빌드 전에 먼저 준비합니다.
+### Windows (PowerShell)
 
 ```powershell
 pnpm install
-pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno
-pwsh scripts/build-ffmpeg-win.ps1    # ffmpeg 9.0.2 (Windows)
+pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno 받기
+pwsh scripts/build-ffmpeg-win.ps1    # ffmpeg 9.0.2 빌드
+pnpm tauri build                     # 설치 파일 (NSIS)
+pwsh scripts/make-portable.ps1       # 포터블 zip
+pwsh scripts/verify-build.ps1        # 결과물 검증 (선택)
 ```
+
+- 설치 파일: `src-tauri/target/release/bundle/nsis/slice-youtube_<버전>_x64-setup.exe`
+- 포터블 zip: `dist/slice-youtube-<버전>-portable-x64.zip`
+
+### Linux (Debian/Ubuntu 계열)
 
 ```bash
-# Linux (Debian/Ubuntu 계열, sudo 필요)
-pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno
-bash scripts/build-ffmpeg-linux.sh   # ffmpeg 9.0.2
+pnpm install
+pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno 받기
+bash scripts/build-ffmpeg-linux.sh   # ffmpeg 9.0.2 빌드 (sudo 필요)
+pnpm tauri build                     # AppImage
+bash scripts/verify-build-linux.sh   # 결과물 검증 (선택)
 ```
 
-Linux에서 Tauri를 빌드하려면 [시스템 의존 패키지](https://v2.tauri.app/start/prerequisites/#linux)도 필요합니다.
+- AppImage: `src-tauri/target/release/bundle/appimage/slice-youtube_<버전>_amd64.AppImage`
 
-`-Version`, `-Hw sw`(하드웨어 인코더 제외)로 버전과 구성을 바꿀 수 있습니다.
-configure 옵션은 [`build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml)과 같으니, 한쪽을 바꾸면 다른 쪽도 바꾸세요.
+### 참고
 
-준비가 끝나면 실행하거나 빌드합니다.
-
-```powershell
-pnpm tauri dev
-```
-
-```powershell
-pnpm tauri build
-pwsh scripts/make-portable.ps1 -Version <버전>   # 포터블 zip (선택)
-```
+- 버전은 `src-tauri/tauri.conf.json`의 `version`을 따릅니다. 배포할 때는 `package.json`, `src-tauri/Cargo.toml`의 `version`도 같이 올립니다.
+- sidecar 바이너리(yt-dlp, deno, ffmpeg)는 git에 없으므로 `tauri dev`/`tauri build` 전에 위 준비 단계가 필요합니다. 개발 실행만 할 때는 `pnpm tauri build` 대신 `pnpm tauri dev`를 씁니다.
+- ffmpeg 스크립트는 `-Version 9.0.2`, `-Hw sw`(하드웨어 인코더 제외, Windows)로 버전과 구성을 바꿀 수 있습니다. configure 옵션은 [`build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml)과 같으니, 한쪽을 바꾸면 다른 쪽도 바꾸세요.
+- Linux는 Tauri [시스템 의존 패키지](https://v2.tauri.app/start/prerequisites/#linux)도 필요합니다.
 
 ## 서드파티
 

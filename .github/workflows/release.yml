@@ -1,24 +1,57 @@
-# 버전 태그(v0.1.0 등)를 푸시하면 Windows(설치 파일 NSIS + 포터블 zip)와 Linux(AppImage)를 빌드해 GitHub Release 로 게시한다.
+# main 에 src-tauri/tauri.conf.json 의 변경이 올라오면, 그 version 으로 v<version> 태그가 아직 없을 때만
+# Windows(설치 파일 NSIS + 포터블 zip)와 Linux(AppImage)를 빌드해 GitHub Release 로 게시한다. (태그는 게시할 때 자동으로 만든다)
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+#   1) tauri.conf.json, package.json, Cargo.toml 의 version 을 같은 값으로 올리고 커밋
+#   2) main 에 push  ->  v<version> 태그와 Release 가 만들어진다
 #
-# 태그는 src-tauri/tauri.conf.json 의 version 과 일치해야 한다. (package.json, Cargo.toml 도 같이 올릴 것)
+# 같은 버전의 태그가 이미 있으면 아무것도 하지 않는다. 실패했거나 다시 하고 싶으면 Actions 탭에서 수동 실행(workflow_dispatch).
 name: release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths: ['src-tauri/tauri.conf.json']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      release: ${{ steps.ver.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 버전 읽기, 태그 확인, 버전 일치 확인
+        id: ver
+        run: |
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          [ "$(node -p "require('./package.json').version")" = "$VER" ] || { echo "::error::package.json version 이 $VER 와 다릅니다."; exit 1; }
+          grep -qE "^version = \"$VER\"" src-tauri/Cargo.toml || { echo "::error::Cargo.toml version 이 $VER 와 다릅니다."; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VER" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$VER 태그가 이미 있어 릴리스를 건너뜁니다."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # 경량 LGPL ffmpeg 를 OS 별로 빌드해 아티팩트로 넘긴다. (같은 버전/설정의 캐시가 있으면 빌드 생략)
   ffmpeg:
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     uses: ./.github/workflows/build-ffmpeg.yml
 
   build:
-    needs: ffmpeg
+    needs: [prepare, ffmpeg]
+    if: needs.prepare.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -34,20 +67,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: 태그와 앱 버전 일치 확인
-        id: ver
-        shell: bash
-        run: |
-          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::태그($GITHUB_REF_NAME)와 tauri.conf.json 의 version($VER)이 다릅니다."
-            exit 1
-          fi
-          # package.json, Cargo.toml 도 같은 버전이어야 한다
-          [ "$(node -p "require('./package.json').version")" = "$VER" ] || { echo "::error::package.json version 불일치"; exit 1; }
-          grep -qE "^version = \"$VER\"" src-tauri/Cargo.toml || { echo "::error::Cargo.toml version 불일치"; exit 1; }
 
       - name: Tauri 빌드 의존성 (Linux)
         if: matrix.name == 'linux'
@@ -96,16 +115,16 @@ jobs:
       - name: 포터블 zip 만들기
         if: matrix.name == 'windows'
         shell: pwsh
-        run: pwsh scripts/make-portable.ps1 -Version "${{ steps.ver.outputs.version }}"
+        run: pwsh scripts/make-portable.ps1 -Version "${{ needs.prepare.outputs.version }}"
 
       - name: 빌드 결과 검증 (Windows)
         if: matrix.name == 'windows'
         shell: pwsh
-        run: pwsh scripts/verify-build.ps1 -Version "${{ steps.ver.outputs.version }}"
+        run: pwsh scripts/verify-build.ps1 -Version "${{ needs.prepare.outputs.version }}"
 
       - name: 빌드 결과 검증 (Linux)
         if: matrix.name == 'linux'
-        run: bash scripts/verify-build-linux.sh "${{ steps.ver.outputs.version }}"
+        run: bash scripts/verify-build-linux.sh "${{ needs.prepare.outputs.version }}"
 
       - name: 배포 파일 업로드
         uses: actions/upload-artifact@v4
@@ -118,7 +137,7 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
 
   publish:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +158,9 @@ jobs:
           for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage'; do
             compgen -G "release-files/$pat" >/dev/null || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
           done
-          VER="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" "${FILES[@]}" \
+          VER="${{ needs.prepare.outputs.version }}"
+          # 태그가 없으므로 gh 가 이 커밋에 v$VER 태그를 만든다
+          gh release create "v$VER" "${FILES[@]}" \
+            --target "$GITHUB_SHA" \
             --title "slice-youtube $VER" \
             --generate-notes

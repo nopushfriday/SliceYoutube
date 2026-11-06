@@ -2,10 +2,13 @@
 #  - 설치 파일(NSIS)과 포터블 zip 이 있는지
 #  - 포터블 zip 안에 앱과 sidecar 3개가 있는지
 #  - 번들된 ffmpeg 가 실행되고 GPL 이 아닌지, 필요한 인코더가 있는지
-#  사용 예: pwsh scripts/verify-build.ps1 -Version 0.1.0
-param([Parameter(Mandatory)][string]$Version)
+#  사용 예: pwsh scripts/verify-build.ps1   (버전은 tauri.conf.json 에서 읽는다)
+param(
+  [string]$Version
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if (-not $Version) { $Version = (Get-Content (Join-Path $root 'src-tauri	auri.conf.json') -Raw | ConvertFrom-Json).version }
 $fail = @()
 
 $setup = Get-ChildItem (Join-Path $root 'src-tauri\target\release\bundle\nsis') -Filter '*-setup.exe' -ErrorAction SilentlyContinue

@@ -2,10 +2,10 @@
 # tauri build 이후, Linux AppImage 가 올바른지 검증한다.
 #  - AppImage 가 있는지, 안에 앱과 sidecar 3개가 있는지
 #  - 번들된 ffmpeg 가 실행되고 GPL 이 아닌지, 필요한 인코더가 있는지
-#   bash scripts/verify-build-linux.sh <버전>
+#   bash scripts/verify-build-linux.sh [버전]
 set -euo pipefail
-VER="${1:?버전을 지정하세요}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VER="${1:-$(node -p "require('$ROOT/src-tauri/tauri.conf.json').version")}"   # 버전은 tauri.conf.json 에서 읽는다
 
 IMG="$(ls "$ROOT"/src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -n1 || true)"
 [ -n "$IMG" ] || { echo "::error::AppImage 가 없습니다"; exit 1; }
