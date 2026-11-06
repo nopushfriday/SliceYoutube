@@ -151,12 +151,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          shopt -s nullglob
-          FILES=(release-files/*)
+          # 아티팩트는 업로드 때의 하위 폴더 구조가 유지되므로 파일만 모은다
+          mapfile -t FILES < <(find release-files -type f | sort)
           ls -l "${FILES[@]}"
           # 설치 파일, 포터블 zip, AppImage 가 모두 있어야 한다
           for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage'; do
-            compgen -G "release-files/$pat" >/dev/null || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
+            [ -n "$(find release-files -type f -name "$pat" -print -quit)" ] || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
           done
           VER="${{ needs.prepare.outputs.version }}"
           # 태그가 없으므로 gh 가 이 커밋에 v$VER 태그를 만든다
