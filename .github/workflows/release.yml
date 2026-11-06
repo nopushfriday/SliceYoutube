@@ -13,11 +13,9 @@ permissions:
   contents: write
 
 jobs:
-  # 경량 LGPL ffmpeg 가 아직 없으면 먼저 빌드한다. (이미 있으면 바로 끝남)
+  # 경량 LGPL ffmpeg 를 빌드해 아티팩트로 넘긴다. (같은 버전/설정의 캐시가 있으면 빌드 생략)
   ffmpeg:
     uses: ./.github/workflows/build-ffmpeg.yml
-    permissions:
-      contents: write
 
   build:
     needs: ffmpeg
@@ -54,11 +52,19 @@ jobs:
       - name: 프런트엔드 의존성 설치
         run: pnpm install --frozen-lockfile
 
-      - name: sidecar 준비 (yt-dlp, deno, 이 저장소가 빌드한 경량 ffmpeg)
+      - name: sidecar 준비 (yt-dlp, deno)
         shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: pwsh scripts/fetch-binaries.ps1 -FfmpegRepo "${{ github.repository }}"
+        run: pwsh scripts/fetch-binaries.ps1
+
+      - name: ffmpeg 받기 (위 job 의 아티팩트)
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg
+          path: ffmpeg-dl
+
+      - name: ffmpeg 배치
+        shell: bash
+        run: cp ffmpeg-dl/ffmpeg-x86_64-pc-windows-msvc.exe src-tauri/binaries/
 
       - name: 빌드 (설치 파일)
         run: pnpm tauri build

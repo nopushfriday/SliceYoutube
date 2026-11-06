@@ -1,13 +1,29 @@
 # slice-youtube
 
-YouTube 영상에서 **필요한 구간만** 받는 데스크톱 앱. (Tauri 2 + Svelte 5 + yt-dlp)
+YouTube 영상에서 **필요한 구간만** 골라 받는 Windows 데스크톱 앱.
+Tauri 2 · Svelte 5 · yt-dlp
 
-- 영상을 보면서 `Q`(시작) / `W`(끝)로 구간을 지정하고 큐에 담아 순서대로 다운로드
-- 전체를 받지 않고 `yt-dlp --download-sections`로 지정 구간만 수신
-- 코덱 선택(자동 / H.264 / VP9 / AV1). 영상이 해당 코덱을 제공하지 않으면 받은 뒤 인코딩
-- 오디오만(mp3) 추출 지원
+## 주요 기능
 
-## 단축키
+- 영상을 보면서 시작/끝 지점을 지정하고, 여러 구간을 큐에 담아 순서대로 다운로드
+- 전체를 받지 않고 `yt-dlp --download-sections`로 **지정 구간만** 수신
+- 코덱 선택: 자동 / H.264 / VP9 / AV1 (영상이 해당 코덱을 제공하지 않으면 받은 뒤 인코딩)
+- 오디오만(mp3) 추출
+
+## 설치
+
+[Releases](https://github.com/roro128/slice-youtube/releases)에서 받습니다.
+
+- `slice-youtube_<버전>_x64-setup.exe` — 설치 파일
+- `slice-youtube-<버전>-portable-x64.zip` — 압축만 풀면 실행되는 포터블 버전
+
+## 사용법
+
+1. 영상 URL을 입력해 불러옵니다.
+2. 재생하면서 `Q`로 시작, `W`로 끝 지점을 지정합니다. (타임라인 핸들을 끌어도 됩니다)
+3. `Enter`로 큐에 추가하고, 필요한 만큼 반복한 뒤 다운로드를 시작합니다.
+
+### 단축키
 
 | 키 | 동작 |
 |---|---|
@@ -18,55 +34,51 @@ YouTube 영상에서 **필요한 구간만** 받는 데스크톱 앱. (Tauri 2 +
 | `\` | 구간 반복 |
 | `Enter` | 큐에 추가 |
 
-타임라인의 핸들을 끌면 영상 위치가 따라가며, `Shift`를 누르고 끌면 미세 조절됩니다.
+타임라인 핸들을 끌면 영상 위치가 따라가며, `Shift`를 누르고 끌면 미세 조절됩니다.
 
-## 개발 환경 준비
+### 알려진 사항
+
+- AV1 인코딩(영상이 AV1을 제공하지 않을 때의 폴백)은 libaom을 쓰므로 H.264/VP9보다 느립니다.
+
+## 개발
 
 필요: Node.js, pnpm, Rust
 
 ```powershell
 pnpm install
-pwsh scripts/fetch-binaries.ps1 -FfmpegRepo <owner>/<repo>   # src-tauri/binaries 에 yt-dlp, deno, ffmpeg 준비
+pwsh scripts/fetch-binaries.ps1   # src-tauri/binaries 에 yt-dlp, deno 준비
+bash scripts/build-ffmpeg.sh      # ffmpeg 직접 빌드 (MSYS2 MINGW64 셸, 아래 참고)
 pnpm tauri dev
 ```
 
-`-FfmpegRepo`를 생략하면 개발용으로 gyan.dev essentials(GPL, 약 100MB)를 받습니다. **배포 빌드에는 쓰지 마세요.**
+ffmpeg는 받지 않고 직접 빌드합니다. [빌드](#빌드) 참고.
 
-## ffmpeg 빌드 (배포용, LGPL)
+### 빌드
 
-[`.github/workflows/build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml)이 이 앱에 필요한 기능만 켠 정적 ffmpeg를 빌드해 GitHub Release로 게시합니다.
-Actions 탭에서 `build-ffmpeg`를 수동 실행(workflow_dispatch)하세요. 같은 버전·설정의 릴리스가 이미 있으면 다시 빌드하지 않으므로 한 번 만들어 두고 계속 재사용합니다.
+sidecar 바이너리가 없으면 먼저 준비한 뒤 빌드합니다. ffmpeg는 받지 않고 직접 빌드하며, 이를 위해 [MSYS2](https://www.msys2.org/)가 필요합니다.
 
-- GPL/nonfree 없음 (libx264 미사용). H.264는 libopenh264, 하드웨어 인코더(NVENC/AMF/Media Foundation)는 옵션
-- 소스 tarball과 BUILD-INFO.txt를 릴리스에 함께 게시 (LGPL 소스 제공)
-- 설정을 바꾸면 워크플로의 `CONFIG_REV`를 올립니다.
-- openh264는 소스 빌드를 정적 링크하므로 Cisco의 H.264 특허 사용료 보증이 적용되지 않습니다. 대규모 배포 시 검토가 필요합니다.
-
-## Sidecar
-
-| 바이너리 | 용도 |
-|---|---|
-| yt-dlp | 영상 정보 조회와 구간 다운로드. 앱을 열 때마다 최신 버전으로 자동 업데이트(앱 데이터 폴더의 복사본을 갱신) |
-| deno | YouTube 추출에 필요한 JS 런타임 |
-| ffmpeg | 구간 추출·병합, 코덱 변환 (H.264 openh264 / VP9 libvpx / AV1 libaom), mp3 추출 |
-
-sidecar 바이너리는 git에 포함하지 않습니다.
-
-## 배포 (GitHub Release)
-
-버전 태그를 푸시하면 [`release`](.github/workflows/release.yml) 워크플로가 설치 파일(NSIS)과 포터블 zip을 빌드해 릴리스로 게시합니다.
-
-```bash
-# 1) src-tauri/tauri.conf.json, package.json, src-tauri/Cargo.toml 의 version 을 올리고 커밋
-# 2) 태그를 푸시 (태그는 tauri.conf.json 의 version 과 일치해야 함)
-git tag v0.1.0
-git push origin v0.1.0
+```powershell
+pnpm install
+pwsh scripts/fetch-binaries.ps1                  # yt-dlp, deno
+pnpm tauri build
+pwsh scripts/make-portable.ps1 -Version <버전>   # 포터블 zip (선택)
 ```
 
-- 경량 LGPL ffmpeg 릴리스(`ffmpeg-*`)가 없으면 워크플로가 먼저 빌드합니다. 있으면 재사용합니다.
-- 산출물: `slice-youtube_<버전>_x64-setup.exe`(설치 파일), `slice-youtube-<버전>-portable-x64.zip`(포터블)
-- 로컬에서 만들려면 `pwsh scripts/fetch-binaries.ps1 -FfmpegRepo <owner>/<repo>` → `pnpm tauri build` → `pwsh scripts/make-portable.ps1 -Version <버전>`
+```bash
+# MSYS2 MINGW64 셸에서, pnpm tauri build 전에 실행
+bash scripts/build-ffmpeg.sh            # ffmpeg 9.0.2, 하드웨어 인코더 포함
+bash scripts/build-ffmpeg.sh 9.0.2 sw   # 버전, hw|sw 지정
+```
 
-## 알려진 사항
+`build-ffmpeg.sh`는 의존 패키지 설치부터 빌드·검증까지 하고, 결과를 `src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe`에 둡니다.
+configure 옵션은 [`build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml)과 같으니, 한쪽을 바꾸면 다른 쪽도 바꾸세요.
 
-- AV1 인코딩(영상이 AV1을 제공하지 않을 때의 폴백)은 libaom을 쓰므로 H.264/VP9보다 느립니다.
+## 서드파티
+
+앱은 아래 프로그램을 별도 실행 파일(sidecar)로 함께 배포하며, 링크하지 않고 프로세스로 실행합니다. 바이너리는 git에 포함하지 않습니다.
+
+| 바이너리 | 라이선스 | 소스 |
+|---|---|---|
+| yt-dlp | Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) |
+| deno | MIT | [denoland/deno](https://github.com/denoland/deno) |
+| ffmpeg | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
