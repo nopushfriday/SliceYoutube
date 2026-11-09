@@ -29,7 +29,52 @@ struct VideoInfo {
     title: String,
     duration: f64,
     channel: String,
+    /// 가로/세로 비율 (자르기 미리보기용). 알 수 없으면 16/9
+    aspect: f64,
+    /// 유튜브 임베드 플레이어로 재생 가능한지. false면 스트림 재생으로 대체한다
+    embeddable: bool,
     formats: Vec<FormatInfo>,
+}
+
+/// 영상 가장자리를 잘라낼 비율(%). 해상도를 몰라도 되도록 비율로 받는다.
+#[derive(Deserialize, Default, Clone, Copy)]
+struct Crop {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+}
+
+impl Crop {
+    fn is_active(&self) -> bool {
+        self.left > 0.0 || self.right > 0.0 || self.top > 0.0 || self.bottom > 0.0
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let sides = [self.left, self.right, self.top, self.bottom];
+        if sides.iter().any(|v| !v.is_finite() || !(0.0..100.0).contains(v)) {
+            return Err("자르기 값은 0~100% 사이여야 합니다".into());
+        }
+        if self.left + self.right >= 95.0 || self.top + self.bottom >= 95.0 {
+            return Err("남는 영상 영역이 너무 작습니다 (좌+우, 상+하는 각각 95% 미만)".into());
+        }
+        Ok(())
+    }
+
+    /// ffmpeg crop 필터. yuv420p/H.264는 짝수 크기만 허용하므로 모든 값을 짝수로 맞춘다.
+    fn filter(&self) -> Option<String> {
+        if !self.is_active() {
+            return None;
+        }
+        let f = |v: f64| format!("{:.5}", v / 100.0);
+        let w = f(100.0 - self.left - self.right);
+        let h = f(100.0 - self.top - self.bottom);
+        Some(format!(
+            "crop=trunc(iw*{w}/2)*2:trunc(ih*{h}/2)*2:trunc(iw*{}/2)*2:trunc(ih*{}/2)*2",
+            f(self.left),
+            f(self.top)
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -48,6 +93,9 @@ struct DownloadReq {
     hw_accel: bool,
     /// "auto" | "h264" | "vp9" | "av1"
     codec: String,
+    /// 상하좌우 자르기(%). 하나라도 있으면 구간을 재인코딩한다 (오디오만일 때는 무시)
+    #[serde(default)]
+    crop: Crop,
     formats: Vec<FormatInfo>,
     out_dir: String,
 }
@@ -263,15 +311,23 @@ fn selected_height(formats: &[FormatInfo], cap: u32, codec: Option<&str>) -> u32
 /// (macOS 는 VideoToolbox 하나만 쓴다)
 const HW_CANDIDATES: [&str; 4] = ["h264_nvenc", "h264_amf", "h264_mf", "h264_videotoolbox"];
 
-/// 하드웨어 인코더 인자 (비트레이트 기준)
-fn hw_h264_args(enc: &str, bitrate: &str) -> Vec<String> {
+/// 하드웨어 인코더 인자 (일정 품질 기준: 화면이 복잡하면 비트레이트가 자동으로 늘어난다)
+/// 일정 품질 모드를 지원하지 않는 드라이버는 probe_hw의 시험 인코딩에서 걸러져 CPU(CRF)로 넘어간다.
+fn hw_h264_args(enc: &str) -> Vec<String> {
     let v: Vec<&str> = match enc {
-        "h264_nvenc" => vec!["-c:v", enc, "-preset", "p5", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
-        "h264_amf" => vec!["-c:v", enc, "-quality", "quality", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
+        "h264_nvenc" => vec![
+            "-c:v", enc, "-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0", "-pix_fmt", "yuv420p",
+        ],
+        "h264_amf" => vec![
+            "-c:v", enc, "-quality", "quality", "-rc", "cqp", "-qp_i", "20", "-qp_p", "22", "-pix_fmt",
+            "yuv420p",
+        ],
         // -allow_sw 0: 하드웨어 인코더를 쓸 수 없으면 실패시켜 소프트웨어로 대체되게 한다
-        "h264_videotoolbox" => vec!["-c:v", enc, "-allow_sw", "0", "-b:v", bitrate, "-pix_fmt", "yuv420p"],
+        "h264_videotoolbox" => {
+            vec!["-c:v", enc, "-allow_sw", "0", "-q:v", "65", "-pix_fmt", "yuv420p"]
+        }
         // hw_encoding=1: 하드웨어 변환기가 없으면 실패시켜 소프트웨어로 대체되게 한다
-        _ => vec!["-c:v", enc, "-hw_encoding", "1", "-b:v", bitrate],
+        _ => vec!["-c:v", enc, "-hw_encoding", "1", "-rate_control", "quality", "-quality", "80"],
     };
     v.into_iter().map(String::from).collect()
 }
@@ -286,7 +342,7 @@ async fn probe_hw(app: &AppHandle) -> Option<String> {
         ]
         .map(String::from)
         .to_vec();
-        args.extend(hw_h264_args(enc, "1M"));
+        args.extend(hw_h264_args(enc));
         args.extend(["-f", "null", "-"].map(String::from));
         let Ok(cmd) = app.shell().sidecar("ffmpeg") else {
             return None;
@@ -328,14 +384,21 @@ fn encode_args(
     h264_enc: &str,
     bitrate: &str,
     hw: Option<&str>,
+    vf: Option<&str>,
 ) -> Vec<String> {
     if let (Some(enc), "h264") = (hw, codec) {
         let mut a: Vec<String> = ["-hide_banner", "-y", "-i", input].map(String::from).to_vec();
-        a.extend(hw_h264_args(enc, bitrate));
+        if let Some(vf) = vf {
+            a.extend(["-vf".to_string(), vf.to_string()]);
+        }
+        a.extend(hw_h264_args(enc));
         a.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output].map(String::from));
         return a;
     }
     let mut a: Vec<&str> = vec!["-hide_banner", "-y", "-i", input];
+    if let Some(vf) = vf {
+        a.extend(["-vf", vf]);
+    }
     match codec {
         "h264" if h264_enc == "libx264" => a.extend([
             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a",
@@ -410,6 +473,135 @@ async fn run_job(
     Ok(Outcome { code, file, last_error, cancelled })
 }
 
+/// 미리보기 스트림을 중계하는 로컬 프록시 상태
+#[derive(Default)]
+struct StreamProxy {
+    port: tokio::sync::Mutex<Option<u16>>,
+    upstream: std::sync::Arc<Mutex<String>>,
+}
+
+const PREVIEW_UA: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+/// googlevideo는 브라우저 형태의 User-Agent가 없으면 403을 돌려주고, 웹뷰는 이를 직접 설정할 수 없다.
+/// 그래서 127.0.0.1에서 요청(Range 포함)을 받아 헤더를 붙여 원본으로 전달한다.
+async fn serve_proxy(listener: tokio::net::TcpListener, upstream: std::sync::Arc<Mutex<String>>) {
+    use futures_util::StreamExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let client = reqwest::Client::new();
+    loop {
+        let Ok((mut sock, _)) = listener.accept().await else { continue };
+        let client = client.clone();
+        let upstream = upstream.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut buf = vec![0u8; 8192];
+            let Ok(n) = sock.read(&mut buf).await else { return };
+            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let range = head.lines().find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case("range").then(|| v.trim().to_string())
+            });
+            // 직후 첫 요청이 간헐적으로 403이 되는 경우가 있어 짧게 재시도한다
+            let mut result = None;
+            for _ in 0..3 {
+                let url = upstream.lock().unwrap().clone();
+                let mut rq = client.get(&url).header("User-Agent", PREVIEW_UA);
+                if let Some(r) = &range {
+                    rq = rq.header("Range", r);
+                }
+                let r = rq.send().await;
+                let retry = matches!(&r, Ok(x) if x.status().as_u16() == 403);
+                result = Some(r);
+                if !retry {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+            }
+            let Some(Ok(resp)) = result else {
+                let _ = sock
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+                return;
+            };
+            let mut out = format!(
+                "HTTP/1.1 {} {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n",
+                resp.status().as_u16(),
+                resp.status().canonical_reason().unwrap_or("")
+            );
+            for h in ["content-type", "content-length", "content-range", "accept-ranges"] {
+                if let Some(v) = resp.headers().get(h).and_then(|v| v.to_str().ok()) {
+                    out.push_str(&format!("{h}: {v}\r\n"));
+                }
+            }
+            out.push_str("\r\n");
+            if sock.write_all(out.as_bytes()).await.is_err() {
+                return;
+            }
+            let mut body = resp.bytes_stream();
+            while let Some(Ok(chunk)) = body.next().await {
+                // 플레이어가 시크하며 연결을 닫으면 쓰기가 실패하므로 여기서 멈춘다
+                if sock.write_all(&chunk).await.is_err() {
+                    return;
+                }
+            }
+        });
+    }
+}
+
+/// 임베드가 안 되는 영상의 미리보기용 스트림 주소 (낮은 화질, 소리가 합쳐진 포맷 우선).
+/// 로컬 프록시 주소를 돌려주며, <video>가 재생하는 구간만 HTTP Range로 받으므로
+/// 긴 영상도 전체를 내려받지 않는다.
+#[tauri::command]
+async fn stream_url(
+    app: AppHandle,
+    proxy: State<'_, StreamProxy>,
+    url: String,
+) -> Result<String, String> {
+    let mut args = base_args()?;
+    args.extend(
+        [
+            "-g",
+            "--no-playlist",
+            "--no-warnings",
+            "-f",
+            "18/b[height<=480][acodec!=none][protocol=https]/bv*[height<=480][protocol=https]/b[height<=480]",
+        ]
+        .map(String::from),
+    );
+    args.push(url);
+    let out = ytdlp_cmd(&app)
+        .await?
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let direct = match text.lines().map(str::trim).find(|l| l.starts_with("http")) {
+        Some(u) if out.status.success() => u.to_string(),
+        _ => return Err("미리보기 스트림 주소를 가져오지 못했습니다".into()),
+    };
+    *proxy.upstream.lock().unwrap() = direct;
+
+    let mut port = proxy.port.lock().await;
+    let p = match *port {
+        Some(p) => p,
+        None => {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|e| e.to_string())?;
+            let p = listener.local_addr().map_err(|e| e.to_string())?.port();
+            tauri::async_runtime::spawn(serve_proxy(listener, proxy.upstream.clone()));
+            *port = Some(p);
+            p
+        }
+    };
+    // 영상이 바뀌면 브라우저 캐시를 쓰지 않도록 매번 다른 쿼리를 붙인다
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    Ok(format!("http://127.0.0.1:{p}/stream?{nonce}"))
+}
+
 #[tauri::command]
 async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     let mut args = base_args()?;
@@ -459,7 +651,21 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
         formats = collect(false);
     }
 
+    let aspect = v["formats"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| Some((f["width"].as_f64()?, f["height"].as_f64()?)))
+        .filter(|(w, h)| *w > 0.0 && *h > 0.0)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .or_else(|| Some((v["width"].as_f64()?, v["height"].as_f64()?)))
+        .filter(|(w, h)| *w > 0.0 && *h > 0.0)
+        .map_or(16.0 / 9.0, |(w, h)| w / h);
+
     Ok(VideoInfo {
+        aspect,
+        embeddable: v["extractor_key"].as_str() == Some("Youtube")
+            && v["playable_in_embed"].as_bool() != Some(false),
         id: v["id"].as_str().unwrap_or_default().to_string(),
         title: v["title"].as_str().unwrap_or_default().to_string(),
         duration: v["duration"].as_f64().unwrap_or(0.0),
@@ -497,9 +703,10 @@ fn cut_encoder_args(
     cut_hw: Option<&str>,
     h264_enc: &str,
     bitrate: &str,
+    vf: Option<&str>,
 ) -> Vec<String> {
-    let v: Vec<String> = match (src_codec, cut_hw) {
-        (Some("h264"), Some(hw)) => return hw_h264_args(hw, bitrate),
+    let mut v: Vec<String> = match (src_codec, cut_hw) {
+        (Some("h264"), Some(hw)) => hw_h264_args(hw),
         (Some("h264"), None) if h264_enc == "libx264" => {
             ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p"]
                 .map(String::from)
@@ -508,16 +715,19 @@ fn cut_encoder_args(
         (Some("h264"), None) => ["-c:v", h264_enc, "-b:v", bitrate, "-pix_fmt", "yuv420p"]
             .map(String::from)
             .to_vec(),
-        (Some("vp9"), _) => ["-c:v", "libvpx-vp9", "-b:v", bitrate, "-row-mt", "1", "-cpu-used", "4"]
+        (Some("vp9"), _) => ["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-row-mt", "1", "-cpu-used", "4"]
             .map(String::from)
             .to_vec(),
         (Some("av1"), _) => {
-            ["-c:v", "libaom-av1", "-b:v", bitrate, "-cpu-used", "8", "-row-mt", "1"]
+            ["-c:v", "libaom-av1", "-crf", "30", "-b:v", "0", "-cpu-used", "8", "-row-mt", "1"]
                 .map(String::from)
                 .to_vec()
         }
         _ => vec!["-b:v".to_string(), bitrate.to_string()],
     };
+    if let Some(vf) = vf {
+        v.extend(["-vf".to_string(), vf.to_string()]);
+    }
     v
 }
 
@@ -529,6 +739,7 @@ fn build_dl_args(
     h264_enc: &str,
     bitrate: &str,
     cut_hw: Option<&str>,
+    vf: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let cap = req.max_height;
     let mut args = base_args()?;
@@ -542,7 +753,7 @@ fn build_dl_args(
         if !req.audio_only {
             // 정확한 컷은 구간을 재인코딩한다. CRF가 없는 인코더(openh264 등)의 기본 비트레이트가
             // 매우 낮으므로 출력 비트레이트를 명시한다. (copy 모드에서는 쓰이지 않음)
-            let out_args = cut_encoder_args(src_codec, cut_hw, h264_enc, bitrate).join(" ");
+            let out_args = cut_encoder_args(src_codec, cut_hw, h264_enc, bitrate, vf).join(" ");
             args.push("--downloader-args".into());
             args.push(format!("ffmpeg_o:{out_args}"));
         }
@@ -598,11 +809,18 @@ async fn download(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     hw_cache: State<'_, HwCache>,
-    req: DownloadReq,
+    mut req: DownloadReq,
 ) -> Result<String, String> {
     if req.end <= req.start {
         return Err("끝 지점이 시작 지점보다 뒤여야 합니다".into());
     }
+    req.crop.validate()?;
+    // 자르기는 영상을 다시 인코딩해야 하므로 영상이 있으면 정확한 컷(재인코딩) 경로를 쓴다.
+    let vf = if req.audio_only { None } else { req.crop.filter() };
+    if vf.is_some() {
+        req.accurate = true;
+    }
+    let vf = vf.as_deref();
     let span = (req.end - req.start).max(0.1);
     let cap = req.max_height;
     let want = req.codec.as_str();
@@ -645,13 +863,13 @@ async fn download(
     let cut_hw = if req.accurate && src_codec == Some("h264") { hw.as_deref() } else { None };
 
     let mut r = {
-        let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, cut_hw)?;
+        let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, cut_hw, vf)?;
         let cmd = ytdlp_cmd(&app).await?.args(args);
         run_job(&app, &jobs, req.job, cmd, span, "download").await?
     };
     // 하드웨어 인코더가 실패하면(드라이버 오류, 세션 제한 등) CPU 인코딩으로 자동 재시도
     if cut_hw.is_some() && !r.cancelled && r.code != Some(0) {
-        let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, None)?;
+        let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, None, vf)?;
         let cmd = ytdlp_cmd(&app).await?.args(args);
         r = run_job(&app, &jobs, req.job, cmd, span, "download").await?;
     }
@@ -687,7 +905,7 @@ async fn download(
             .shell()
             .sidecar("ffmpeg")
             .map_err(|e| e.to_string())?
-            .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate, hw)))
+            .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate, hw, vf)))
     };
     // H.264 변환은 하드웨어 인코더가 있으면 먼저 시도하고, 실패하면 CPU 인코딩으로 자동 재시도
     let hw_try = if want == "h264" { hw.as_deref() } else { None };
@@ -724,11 +942,13 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Jobs::default())
         .manage(HwCache::default())
+        .manage(StreamProxy::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             fetch_info,
+            stream_url,
             download,
             cancel,
             ytdlp_update,
@@ -756,6 +976,19 @@ mod tests {
             let prefix = codec_prefix(codec);
             assert_eq!(norm_codec(prefix), Some(codec));
         }
+    }
+
+    #[test]
+    fn crop_filter_uses_even_dimensions() {
+        assert_eq!(Crop::default().filter(), None);
+        let c = Crop { left: 10.0, right: 10.0, top: 0.0, bottom: 5.0 };
+        assert_eq!(
+            c.filter().unwrap(),
+            "crop=trunc(iw*0.80000/2)*2:trunc(ih*0.95000/2)*2:trunc(iw*0.10000/2)*2:trunc(ih*0.00000/2)*2"
+        );
+        assert!(c.validate().is_ok());
+        assert!(Crop { left: 60.0, right: 40.0, ..Default::default() }.validate().is_err());
+        assert!(Crop { top: -1.0, ..Default::default() }.validate().is_err());
     }
 
     #[test]

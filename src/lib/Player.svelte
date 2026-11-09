@@ -4,11 +4,13 @@
   let {
     videoId,
     ontime,
-    onstate
+    onstate,
+    onerror
   }: {
     videoId: string;
     ontime?: (t: number) => void;
     onstate?: (playing: boolean) => void;
+    onerror?: () => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -64,7 +66,11 @@
         onReady: () => {
           ready = true;
         },
-        onStateChange: (e: any) => onstate?.(e.data === 1)
+        onStateChange: (e: any) => onstate?.(e.data === 1),
+        // 101/150: 소유자가 임베드를 금지한 영상
+        onError: (e: any) => {
+          if (e.data === 101 || e.data === 150 || e.data === 153) onerror?.();
+        }
       }
     });
     timer = setInterval(() => {

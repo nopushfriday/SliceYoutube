@@ -1,6 +1,6 @@
 [package]
 name = "slice-youtube"
-version = "1.1.0"
+version = "1.2.0"
 description = "YouTube 영상에서 필요한 구간만 다운로드하는 앱"
 authors = ["you"]
 edition = "2024"
@@ -24,6 +24,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-shell = "2.6.0"
 tauri-plugin-dialog = "2.8.4"
+tokio = { version = "1", features = ["net", "io-util", "time"] }
+# 미리보기 스트림 프록시용. TLS는 rustls로 (OpenSSL 의존 없이 세 OS에서 빌드되도록)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+futures-util = "0.3"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

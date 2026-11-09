@@ -4,14 +4,17 @@
   import { listen } from '@tauri-apps/api/event';
   import { downloadDir, join } from '@tauri-apps/api/path';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { revealItemInDir } from '@tauri-apps/plugin-opener';
+  import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
   import Player from '$lib/Player.svelte';
+  import StreamPlayer from '$lib/StreamPlayer.svelte';
   import Timeline from '$lib/Timeline.svelte';
+  import ScrubNumber from '$lib/ScrubNumber.svelte';
+  import CropOverlay, { type Crop } from '$lib/CropOverlay.svelte';
   import { clamp, fmt } from '$lib/util';
 
   type Fmt = { codec: 'h264' | 'vp9' | 'av1'; height: number };
-  type Info = { id: string; title: string; duration: number; channel: string; formats: Fmt[] };
-  type Codec = 'auto' | 'h264' | 'vp9' | 'av1';
+  type Info = { id: string; title: string; duration: number; channel: string; aspect: number; embeddable: boolean; formats: Fmt[] };
+  type Codec = 'h264' | 'vp9' | 'av1';
   const CODEC_LABEL: Record<string, string> = { h264: 'H.264', vp9: 'VP9', av1: 'AV1' };
   type Seg = {
     id: number;
@@ -42,10 +45,10 @@
   let loading = $state(false);
   let error = $state('');
   let info = $state<Info | null>(null);
-  let sourceUrl = '';
+  let sourceUrl = $state('');
 
   // svelte-ignore non_reactive_update
-  let player: Player;
+  let player: Player | StreamPlayer;
   let now = $state(0);
   let playing = $state(false);
   let start = $state<number | null>(null);
@@ -58,11 +61,29 @@
   let running = $state(false);
   let stopQueue = false;
 
-  let accurate = $state(true);
   let audioOnly = $state(false);
   let maxHeight = $state(0); // 0 = 최고 화질 자동
-  let codec = $state<Codec>('auto');
+  let codec = $state<Codec>('h264');
   let hwAccel = $state(true);
+  const NO_CROP: Crop = { left: 0, right: 0, top: 0, bottom: 0 };
+  let crop = $state<Crop>({ ...NO_CROP });
+  let cropEditing = $state(false);
+  // 임베드가 막힌 영상은 스트림 재생으로 대체
+  let embedBlocked = $state(false);
+  const cropped = $derived(crop.left + crop.right + crop.top + crop.bottom > 0);
+  const CROP_SIDES: [keyof Crop, string][] = [
+    ['left', '왼쪽'],
+    ['top', '위쪽'],
+    ['right', '오른쪽'],
+    ['bottom', '아래쪽']
+  ];
+
+  // 숫자 입력값을 0~(남는 영역 5% 이상) 범위로 보정한다
+  function setCrop(side: keyof Crop, raw: number) {
+    const pair = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' } as const;
+    const v = Number.isFinite(raw) ? raw : 0;
+    crop[side] = Math.round(clamp(v, 0, 95 - crop[pair[side]]) * 10) / 10;
+  }
   // 감지된 하드웨어 H.264 인코더: undefined = 확인 중, null = 없음(CPU 인코딩)
   let hwEnc = $state<string | null | undefined>(undefined);
   let outDir = $state('');
@@ -93,7 +114,6 @@
   const willEncode = $derived(
     !!info &&
       !audioOnly &&
-      codec !== 'auto' &&
       !info.formats.some((f) => f.codec === codec && (maxHeight === 0 || f.height <= maxHeight))
   );
   const pendingCount = $derived(
@@ -104,17 +124,17 @@
       ? 'MP3 오디오'
       : [
           maxHeight === 0 ? '최고 화질' : `${maxHeight}p 이하`,
-          codec === 'auto' ? '자동 코덱' : CODEC_LABEL[codec],
-          accurate ? '정확한 컷' : '빠른 컷'
+          CODEC_LABEL[codec],
+          '재인코딩',
+          ...(cropped ? ['자르기'] : [])
         ].join(' · ')
   );
 
   onMount(() => {
     const saved = JSON.parse(localStorage.getItem('cut-dlp') ?? '{}');
-    accurate = saved.accurate ?? true;
     audioOnly = saved.audioOnly ?? false;
     maxHeight = saved.maxHeight ?? 0;
-    codec = saved.codec ?? 'auto';
+    codec = saved.codec && saved.codec !== 'auto' ? saved.codec : 'h264';
     hwAccel = saved.hwAccel ?? true;
     updateYtdlp(); // 앱을 열 때마다 yt-dlp 최신 버전 확인
     invoke<string | null>('hw_encoder')
@@ -139,7 +159,7 @@
   });
 
   $effect(() => {
-    localStorage.setItem('cut-dlp', JSON.stringify({ accurate, audioOnly, maxHeight, codec, hwAccel, outDir }));
+    localStorage.setItem('cut-dlp', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir }));
   });
 
   async function load() {
@@ -152,6 +172,10 @@
       sourceUrl = u;
       start = end = null;
       now = 0;
+      crop = { ...NO_CROP };
+      cropEditing = false;
+      embedBlocked = !info.embeddable;
+      playing = false;
     } catch (e) {
       error = String(e);
       info = null;
@@ -168,6 +192,14 @@
       return;
     }
     if (url) load();
+  }
+
+  async function openOutDir() {
+    try {
+      await openPath(outDir);
+    } catch (e) {
+      error = `폴더를 열 수 없습니다 (아직 다운로드한 파일이 없으면 폴더가 없을 수 있습니다): ${e}`;
+    }
   }
 
   async function pickDir() {
@@ -252,11 +284,12 @@
             url: s.url,
             start: s.start,
             end: s.end,
-            accurate,
+            accurate: true,
             audioOnly,
             maxHeight,
             codec,
             hwAccel,
+            crop: $state.snapshot(crop),
             formats: s.formats,
             outDir
           }
@@ -369,13 +402,29 @@
     <section class="left">
       {#if info}
         <h2 title={info.title}>{info.title}</h2>
-        <Player bind:this={player} videoId={info.id} ontime={onTime} onstate={(p) => (playing = p)} />
+        <div class="stagebox">
+          {#if embedBlocked}
+            <StreamPlayer bind:this={player} url={sourceUrl} ontime={onTime} onstate={(p) => (playing = p)} />
+          {:else}
+            <Player
+              bind:this={player}
+              videoId={info.id}
+              ontime={onTime}
+              onstate={(p) => (playing = p)}
+              onerror={() => (embedBlocked = true)}
+            />
+          {/if}
+          <CropOverlay bind:crop aspect={info.aspect} editing={cropEditing} />
+        </div>
         <div class="time">
           <button class="icon-btn" onclick={() => player.toggle()} aria-label="재생/일시정지">
             <i class="ti {playing ? 'ti-player-pause' : 'ti-player-play'}"></i>
           </button>
           <b>{fmt(now, 2)}</b> / {fmt(info.duration, 0)}
           <span class="grow"></span>
+          <button class="crop-btn" class:on={cropEditing} onclick={() => (cropEditing = !cropEditing)} title="영상 위에서 드래그해 잘라낼 범위를 지정합니다">
+            <i class="ti ti-crop"></i> 자르기{cropped ? ' ●' : ''}
+          </button>
           <label class="loop"><input type="checkbox" bind:checked={loop} /> 구간 반복 <kbd>\</kbd></label>
         </div>
 
@@ -446,7 +495,6 @@
           {#if !audioOnly}
             <label>코덱
               <select bind:value={codec}>
-                <option value="auto">자동 (제공되는 그대로)</option>
                 <option value="h264">H.264 (호환성 최고)</option>
                 <option value="vp9">VP9</option>
                 <option value="av1">AV1</option>
@@ -467,13 +515,25 @@
               </select>
             </label>
           {/if}
-          <label class="check" title="끄면 키프레임 단위로 잘라 더 빠르지만 시작/끝이 몇 초 어긋날 수 있음">
-            <input type="checkbox" bind:checked={accurate} /> 정확한 컷 (구간만 재인코딩)
-          </label>
           {#if !audioOnly}
-            <label class="check" title="H.264로 인코딩할 때 GPU를 사용합니다. 지원하지 않거나 실패하면 CPU로 자동 전환됩니다.">
-              <input type="checkbox" bind:checked={hwAccel} disabled={hwEnc === null} /> 하드웨어 인코딩 (H.264)
-            </label>
+            <div class="crop">
+              <div class="crop-head">
+                <span>화면 자르기</span>
+                <button class="mini" onclick={() => (crop = { ...NO_CROP })} disabled={!cropped}>초기화</button>
+              </div>
+              {#each CROP_SIDES as [side, label]}
+                <div class="crop-row">
+                  <span>{label}</span>
+                  <span><ScrubNumber value={crop[side]} onchange={(v) => setCrop(side, v)} /></span>
+                </div>
+              {/each}
+              <p class="note">영상 위 '자르기' 버튼으로 드래그하거나, 숫자를 좌우로 끌어 조절(클릭하면 직접 입력)하세요. </p>
+            </div>
+            {#if codec === 'h264'}
+              <label class="check" title="H.264로 인코딩할 때 GPU를 사용합니다. 지원하지 않거나 실패하면 CPU로 자동 전환됩니다.">
+                <input type="checkbox" bind:checked={hwAccel} disabled={hwEnc === null} /> 하드웨어 인코딩 (H.264)
+              </label>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -517,9 +577,14 @@
           {pendingCount > 0 ? `클립 ${pendingCount}개 다운로드` : '다운로드'}
         </button>
       {/if}
-      <button class="folder" onclick={pickDir} title={outDir}>
-        <i class="ti ti-folder"></i><span>{outDir}</span>
-      </button>
+      <div class="folder">
+        <button class="path" onclick={pickDir} title="클릭해서 저장 폴더 변경: {outDir}">
+          <i class="ti ti-folder"></i><span>{outDir}</span>
+        </button>
+        <button class="mini" onclick={openOutDir} title="저장 폴더 열기" aria-label="저장 폴더 열기">
+          <i class="ti ti-folder-open"></i>
+        </button>
+      </div>
     </aside>
   </div>
 
@@ -804,6 +869,9 @@
     gap: 8px;
     font-size: 13px;
     padding: 4px 2px 10px;
+    max-height: 48vh;
+    overflow-y: auto;
+    flex-shrink: 0;
     border-bottom: 1px solid var(--line);
   }
   .opts label {
@@ -817,6 +885,30 @@
     align-items: center;
     gap: 6px;
     color: var(--text);
+  }
+  .stagebox {
+    position: relative;
+  }
+  .crop-btn.on {
+    background: var(--accent, #2563eb);
+    color: #fff;
+  }
+  .crop {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .crop-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+  }
+  .crop-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
   }
   .note {
     margin: 0;
@@ -904,6 +996,16 @@
     margin: 0;
   }
   .folder {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 2px 4px;
+  }
+  .path {
+    flex: 1;
+    min-width: 0;
     justify-content: flex-start;
     font-size: 12px;
     color: var(--muted);
@@ -911,7 +1013,7 @@
     background: none;
     padding: 2px 4px;
   }
-  .folder span {
+  .path span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
