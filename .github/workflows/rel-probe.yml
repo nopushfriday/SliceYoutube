@@ -9,11 +9,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "A: draft, 기본 브랜치 대상"
-          gh api -X POST repos/$GITHUB_REPOSITORY/releases -f tag_name=probe-a -f name=probe-a -F draft=true 2>&1 | head -3 || true
-          echo "B: draft, 커밋 SHA 대상"
-          gh api -X POST repos/$GITHUB_REPOSITORY/releases -f tag_name=probe-b -f name=probe-b -f target_commitish=$GITHUB_SHA -F draft=true 2>&1 | head -3 || true
-          echo "C: 일반 릴리스 (SHA 대상)"
-          gh api -X POST repos/$GITHUB_REPOSITORY/releases -f tag_name=probe-c -f name=probe-c -f target_commitish=$GITHUB_SHA 2>&1 | head -3 || true
-          echo "D: 태그 ref 생성"
-          gh api -X POST repos/$GITHUB_REPOSITORY/git/refs -f ref=refs/tags/probe-d -f sha=$GITHUB_SHA 2>&1 | head -3 || true
+          echo hi > a.txt
+          echo "E: gh release create --generate-notes"
+          gh release create probe-e a.txt --target "$GITHUB_SHA" --title probe-e --generate-notes 2>&1 | tail -2 || true
+          echo "F: gh release create 노트 없이"
+          gh release create probe-f a.txt --target "$GITHUB_SHA" --title probe-f --notes x 2>&1 | tail -2 || true
