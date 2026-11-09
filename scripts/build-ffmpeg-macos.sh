@@ -5,7 +5,7 @@
 # Linux 와 같은 기능 목록을 쓴다. 한쪽을 고치면 다른 쪽도 고친다.
 #  - TLS 는 SecureTransport(시스템 내장), 하드웨어 인코더는 VideoToolbox.
 #  - 코덱 라이브러리는 정적(.a)으로 링크해 배포 앱이 Homebrew 에 의존하지 않게 한다.
-#  - 빌드 러너의 macOS 버전이 최소 지원 버전을 정한다 (CI 는 macos-14 로 고정).
+#  - 빌드 러너의 macOS 버전이 최소 지원 버전을 정한다 (CI 는 macos-15 러너에서 MACOSX_DEPLOYMENT_TARGET=14.0 으로 빌드).
 set -euo pipefail
 
 VER="${1:-9.0.2}"

@@ -281,9 +281,11 @@ jobs:
           path: dist/*
           retention-days: 30
 
-  # macOS Apple Silicon (VideoToolbox 하드웨어 인코더 포함). 러너 버전이 앱의 최소 macOS 버전을 정하므로 macos-14 로 고정한다.
+  # macOS Apple Silicon (VideoToolbox 하드웨어 인코더 포함). macos-14 러너는 이 계정에서 지원되지 않아 macos-15 로 빌드하고, MACOSX_DEPLOYMENT_TARGET 으로 최소 macOS 14 를 유지한다.
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@v4
 

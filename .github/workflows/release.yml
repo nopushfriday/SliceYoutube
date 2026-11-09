@@ -65,10 +65,13 @@ jobs:
             triple: x86_64-unknown-linux-gnu
             ext: ''
           - name: macos
-            os: macos-14
+            os: macos-15
             triple: aarch64-apple-darwin
             ext: ''
     runs-on: ${{ matrix.os }}
+    env:
+      # macos-14 러너는 이 계정에서 지원되지 않아 macos-15 로 빌드하되 macOS 14 이상에서 실행되게 한다
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
     steps:
       - uses: actions/checkout@v4
 
