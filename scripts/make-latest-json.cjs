@@ -21,6 +21,6 @@ const latest = {
   version: VER,
   notes: '',
   pub_date: new Date().toISOString(),
-  platforms: { 'windows-x86_64': entry('-setup.exe'), 'linux-x86_64': entry('.AppImage') }
+  platforms: { 'windows-x86_64': entry('-setup.exe'), 'linux-x86_64': entry('.AppImage'), 'darwin-aarch64': entry('.app.tar.gz') }
 };
 fs.writeFileSync(path.join(dir, 'latest.json'), JSON.stringify(latest, null, 2));
