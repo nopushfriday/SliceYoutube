@@ -100,6 +100,14 @@ struct DownloadReq {
     out_dir: String,
 }
 
+/// 다운로드 시작 시 알게 된 영상 정보 (큐 표시용)
+#[derive(Serialize, Clone)]
+struct DlInfo {
+    job: u32,
+    thumbnail: Option<String>,
+    title: Option<String>,
+}
+
 #[derive(Serialize, Clone)]
 struct Progress {
     job: u32,
@@ -455,6 +463,16 @@ async fn run_job(
                 if let Some(p) = s.trim().strip_prefix("CUTDLP_FILE ") {
                     file = Some(p.trim().to_string());
                     files.push(p.trim().to_string());
+                    continue;
+                }
+                let t = s.trim();
+                if let Some(p) = t.strip_prefix("CUTDLP_THUMB ") {
+                    let thumbnail = Some(p.trim().to_string()).filter(|u| u.starts_with("http"));
+                    let _ = app.emit("dl-info", DlInfo { job, thumbnail, title: None });
+                    continue;
+                }
+                if let Some(p) = t.strip_prefix("CUTDLP_TITLE ") {
+                    let _ = app.emit("dl-info", DlInfo { job, thumbnail: None, title: Some(p.trim().to_string()) });
                     continue;
                 }
                 if let Some(p) = s.trim().strip_prefix("CUTDLP_META ") {
@@ -1063,6 +1081,10 @@ async fn plain_inner(
         "-o".into(),
         // 재생목록의 같은 제목 영상이 서로 덮어쓰지 않도록 항목별 하위 폴더에 받는다
         format!("{out_dir}/%(playlist_index|1)s/%(title).120B.%(ext)s"),
+        "--print".into(),
+        "pre_process:CUTDLP_THUMB %(thumbnail)s".into(),
+        "--print".into(),
+        "pre_process:CUTDLP_TITLE %(title)s".into(),
         "--print".into(),
         "after_move:CUTDLP_FILE %(filepath)s".into(),
         "--print".into(),

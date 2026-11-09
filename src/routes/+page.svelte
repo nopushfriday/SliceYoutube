@@ -50,6 +50,8 @@
     phase: 'download' | 'encode';
     percent: number;
     file?: string;
+    thumb?: string;
+    title?: string;
     count?: number;
     error?: string;
   };
@@ -70,12 +72,25 @@
   const dlPending = $derived(
     dlItems.filter((s) => ['pending', 'error', 'cancelled'].includes(s.status)).length
   );
+  // 유튜브 주소는 바로 썸네일을 알 수 있다 (그 외 사이트는 다운로드가 시작되면 yt-dlp가 알려준다)
+  function ytThumb(u: string) {
+    const m = u.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/);
+    return m ? `https://i.ytimg.com/vi/${m[1]}/mqdefault.jpg` : undefined;
+  }
+  async function openFile(path?: string) {
+    if (!path) return;
+    try {
+      await openPath(path);
+    } catch (e) {
+      error = `파일을 열 수 없습니다: ${e}`;
+    }
+  }
   const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
   function addDownload() {
     const u = dlUrl.trim();
     if (!u) return;
-    dlItems.push({ id: dlNextId++, url: u, status: 'pending', phase: 'download', percent: 0 });
+    dlItems.push({ id: dlNextId++, url: u, thumb: ytThumb(u), status: 'pending', phase: 'download', percent: 0 });
     dlUrl = '';
     if (dlAuto) runDownloads();
   }
@@ -243,6 +258,12 @@
     (async () => {
       outDir = saved.outDir ?? (await join(await downloadDir(), 'cut-dlp'));
     })();
+    const unInfo = listen<{ job: number; thumbnail: string | null; title: string | null }>('dl-info', (e) => {
+      const d = dlItems.find((x) => x.id === e.payload.job);
+      if (!d) return;
+      d.thumb ??= e.payload.thumbnail ?? undefined;
+      if (e.payload.title) d.title = e.payload.title;
+    });
     const un = listen<{ job: number; percent: number; phase: 'download' | 'encode' }>(
       'dl-progress',
       (e) => {
@@ -260,6 +281,7 @@
     );
     return () => {
       un.then((f) => f());
+      unInfo.then((f) => f());
     };
   });
 
@@ -658,8 +680,13 @@
               <span class="t">{fmt(s.start, 1)} – {fmt(s.end, 1)}</span>
               <span class="len">{fmt(s.end - s.start, 1)}초</span>
               <span class="grow"></span>
-              {#if s.status === 'done' && s.file}
-                <button class="mini" onclick={() => revealItemInDir(s.file!)}>폴더</button>
+              <button class="mini" onclick={() => navigator.clipboard.writeText(s.url)} title="주소 복사" aria-label="주소 복사">
+                  <i class="ti ti-copy"></i>
+                </button>
+                {#if s.status === 'done' && s.file}
+                <button class="mini" onclick={() => revealItemInDir(s.file!)} title="폴더에서 보기" aria-label="폴더에서 보기">
+                    <i class="ti ti-folder"></i>
+                  </button>
               {/if}
               <button class="mini" onclick={() => remove(s.id)} title="삭제" aria-label="삭제">
                 <i class="ti ti-x"></i>
@@ -767,24 +794,38 @@
         <ul>
           {#each dlItems as s (s.id)}
             <li class={s.status}>
-              <div class="row">
-                <span class="grow"></span>
-                {#if s.status === 'done' && s.file}
-                  <button class="mini" onclick={() => revealItemInDir(s.file!)}>폴더</button>
-                {/if}
-                <button class="mini" onclick={() => removeDownload(s.id)} title="삭제" aria-label="삭제">
-                  <i class="ti ti-x"></i>
+              <div class="it">
+                <button class="thumb" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title="파일 열기" aria-label="파일 열기">
+                  {#if s.thumb}<img src={s.thumb} alt="" />{:else}<i class="ti ti-video"></i>{/if}
                 </button>
+                <div class="body">
+                  <div class="row">
+                    <span class="grow"></span>
+                    <button class="mini" onclick={() => navigator.clipboard.writeText(s.url)} title="주소 복사" aria-label="주소 복사">
+                      <i class="ti ti-copy"></i>
+                    </button>
+                    {#if s.status === 'done' && s.file}
+                      <button class="mini" onclick={() => revealItemInDir(s.file!)} title="폴더에서 보기" aria-label="폴더에서 보기">
+                        <i class="ti ti-folder"></i>
+                      </button>
+                    {/if}
+                    <button class="mini" onclick={() => removeDownload(s.id)} title="삭제" aria-label="삭제">
+                      <i class="ti ti-x"></i>
+                    </button>
+                  </div>
+                  <button class="name namebtn" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title={s.file ?? s.title ?? s.url}>
+                    {s.file ? baseName(s.file) : (s.title ?? s.url)}
+                  </button>
+                  {#if s.status === 'running'}
+                    <div class="st run">{s.phase === 'encode' ? '변환 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
+                    <progress max="100" value={s.percent}></progress>
+                  {:else if s.status === 'error'}
+                    <div class="err">{s.error}</div>
+                  {:else}
+                    <div class="st {s.status}">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}{s.status === 'done' && (s.count ?? 0) > 1 ? ` · ${s.count}개` : ''}</div>
+                  {/if}
+                </div>
               </div>
-              <div class="name" title={s.file ?? s.url}>{s.file ? baseName(s.file) : s.url}</div>
-              {#if s.status === 'running'}
-                <div class="st run">{s.phase === 'encode' ? '변환 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
-                <progress max="100" value={s.percent}></progress>
-              {:else if s.status === 'error'}
-                <div class="err">{s.error}</div>
-              {:else}
-                <div class="st {s.status}">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}{s.status === 'done' && (s.count ?? 0) > 1 ? ` · ${s.count}개` : ''}</div>
-              {/if}
             </li>
           {:else}
             <li class="empty">
@@ -888,6 +929,48 @@
   }
   .pane.off {
     display: none;
+  }
+  .it {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .body {
+    flex: 1;
+    min-width: 0;
+  }
+  .thumb {
+    width: 72px;
+    height: 41px;
+    flex: none;
+    padding: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #e9edf5;
+    color: var(--muted);
+  }
+  .thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .namebtn {
+    display: block;
+    max-width: 100%;
+    border: 0;
+    background: none;
+    padding: 0;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .namebtn:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+  .namebtn:hover:not(:disabled) {
+    background: none;
+    text-decoration: underline;
+    color: var(--text);
   }
   .dlopts {
     border: 0;
