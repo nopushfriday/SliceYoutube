@@ -4,6 +4,8 @@
 #   1) tauri.conf.json, package.json, Cargo.toml 의 version 을 같은 값으로 올리고 커밋
 #   2) main 에 push  ->  v<version> 태그와 Release 가 만들어진다
 #
+# macOS(Apple Silicon)는 GitHub 의 macos 러너가 이 저장소에서 지원되지 않아('macos-14-arm64-us-xl' not supported) 잠시 뺐다.
+# 다시 넣으려면 build-ffmpeg.yml 의 macos job, 아래 build 매트릭스·배포 파일 검사(.dmg), ci.yml 매트릭스를 되살린다.
 # 같은 버전의 태그가 이미 있으면 아무것도 하지 않는다. 실패했거나 다시 하고 싶으면 Actions 탭에서 수동 실행(workflow_dispatch).
 name: release
 
@@ -63,10 +65,6 @@ jobs:
           - name: linux
             os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
-            ext: ''
-          - name: macos
-            os: macos-14
-            triple: aarch64-apple-darwin
             ext: ''
     runs-on: ${{ matrix.os }}
     steps:
@@ -164,7 +162,7 @@ jobs:
           mapfile -t FILES < <(find release-files -type f | sort)
           ls -l "${FILES[@]}"
           # 설치 파일, 포터블 zip, AppImage 가 모두 있어야 한다
-          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage' '*.dmg'; do
+          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage'; do
             [ -n "$(find release-files -type f -name "$pat" -print -quit)" ] || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
           done
           VER="${{ needs.prepare.outputs.version }}"

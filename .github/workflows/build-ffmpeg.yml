@@ -280,39 +280,3 @@ jobs:
           name: ffmpeg-linux
           path: dist/*
           retention-days: 30
-
-  # macOS Apple Silicon (VideoToolbox 하드웨어 인코더 포함). 러너 버전이 앱의 최소 macOS 버전을 정하므로 macos-14 로 고정한다.
-  macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 이전 빌드 결과 확인
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: dist
-          key: ${{ inputs.force && format('ffmpeg-macos-{0}-r{1}-{2}', inputs.ffmpeg_version, env.CONFIG_REV, github.run_id) || format('ffmpeg-macos-{0}-r{1}', inputs.ffmpeg_version, env.CONFIG_REV) }}
-
-      - name: 빌드 (의존 패키지, configure, make, 검증)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: bash scripts/build-ffmpeg-macos.sh "${{ inputs.ffmpeg_version }}"
-
-      - name: 결과 파일 준비
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir dist
-          cp src-tauri/binaries/ffmpeg-aarch64-apple-darwin dist/
-          cp .ffmpeg-build/ffmpeg-${{ inputs.ffmpeg_version }}.tar.gz dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.gz
-          {
-            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, macOS arm64, cut-dlp 전용 구성)"
-            echo "config rev: ${CONFIG_REV}"
-            echo; cat .ffmpeg-build/version-macos.txt
-          } > dist/BUILD-INFO-macos.txt
-
-      - name: 아티팩트 업로드
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-macos
-          path: dist/*
-          retention-days: 30
