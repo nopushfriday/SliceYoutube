@@ -18,7 +18,7 @@ OUT="$ROOT/src-tauri/binaries/ffmpeg-$TRIPLE"             # Tauri externalBin �
 JOBS="$(sysctl -n hw.ncpu)"
 
 echo "== 의존 패키지 설치"
-brew install nasm pkg-config libvpx aom opus lame
+brew install nasm pkg-config libvpx aom opus lame mpg123
 
 # Homebrew 의 openh264 는 .dylib 만 있어 정적 라이브러리가 없다. 소스(BSD)로 직접 빌드한다.
 OH_VER="${OPENH264_VERSION:-2.6.0}"
@@ -37,8 +37,9 @@ export PKG_CONFIG_PATH="$OH/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 echo "== 정적 라이브러리 확인 (.a 만 모은 폴더를 먼저 검색하게 해 .dylib 링크를 막는다)"
 STATIC="$WORK/static-libs"
 rm -rf "$STATIC" && mkdir -p "$STATIC"
-for pair in openh264:openh264 vpx:libvpx aom:aom opus:opus mp3lame:lame; do
+for pair in openh264:openh264 vpx:libvpx aom:aom opus:opus mp3lame:lame mpg123:mpg123; do
   name="${pair%%:*}"; formula="${pair##*:}"
+  # mpg123: Homebrew 의 lame 정적 라이브러리가 mpg123 디코더 함수를 참조해 함께 링크한다
   if [ "$name" = openh264 ]; then A="$OH/lib/libopenh264.a"; else A="$(brew --prefix "$formula")/lib/lib$name.a"; fi
   [ -f "$A" ] || { echo "정적 라이브러리 없음: $A (직접 빌드가 필요합니다)"; exit 1; }
   ln -s "$A" "$STATIC/"
@@ -59,7 +60,7 @@ echo "== configure"
   --cc=clang \
   --extra-cflags="-I$OH/include -I$(brew --prefix)/include" \
   --extra-ldflags="-L$STATIC -L$(brew --prefix)/lib" \
-  --extra-libs="-lc++ -lm -lpthread" \
+  --extra-libs="-lmpg123 -lc++ -lm -lpthread" \
   --disable-everything --disable-autodetect \
   --disable-debug --disable-doc --disable-ffplay --disable-ffprobe \
   --enable-small --enable-lto --enable-zlib \
