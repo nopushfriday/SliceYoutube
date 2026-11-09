@@ -41,6 +41,98 @@
     ['?', '이 도움말']
   ];
 
+  // 탭: 자르기(구간 지정·화면 자르기·다운로드) / 다운로드(작업 없이 그대로 받기)
+  let tab = $state<'slice' | 'download'>('slice');
+  type DlItem = {
+    id: number;
+    url: string;
+    status: 'pending' | 'running' | 'done' | 'error' | 'cancelled';
+    phase: 'download' | 'encode';
+    percent: number;
+    file?: string;
+    count?: number;
+    error?: string;
+  };
+  let dlUrl = $state('');
+  let dlItems = $state<DlItem[]>([]);
+  let dlRunning = $state(false);
+  let dlStop = false;
+  let dlAudioOnly = $state(false);
+  let dlMaxHeight = $state(0);
+  let dlMode = $state<'merge' | 'original'>('merge');
+  let dlAudio = $state<'aac' | 'mp3'>('aac');
+  let dlPlaylist = $state(false);
+  let dlKbps = $state(192);
+  let dlCodec = $state<'h264' | 'vp9' | 'av1' | 'auto'>('h264');
+  let dlAuto = $state(true);
+  // 컷 작업 id(1부터)와 겹치지 않게 큰 값에서 시작한다 (취소·진행률이 id로 구분됨)
+  let dlNextId = 1_000_000;
+  const dlPending = $derived(
+    dlItems.filter((s) => ['pending', 'error', 'cancelled'].includes(s.status)).length
+  );
+  const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+  function addDownload() {
+    const u = dlUrl.trim();
+    if (!u) return;
+    dlItems.push({ id: dlNextId++, url: u, status: 'pending', phase: 'download', percent: 0 });
+    dlUrl = '';
+    if (dlAuto) runDownloads();
+  }
+
+  async function runDownloads() {
+    if (dlRunning || ytBusy) return;
+    dlRunning = true;
+    dlStop = false;
+    // 실행 중에 추가된 항목도 이어서 처리한다
+    for (const s of dlItems) {
+      if (dlStop) break;
+      if (!['pending', 'error', 'cancelled'].includes(s.status)) continue;
+      s.status = 'running';
+      s.phase = 'download';
+      s.percent = 0;
+      s.error = undefined;
+      try {
+        const files = await invoke<string[]>('download_plain', {
+          req: {
+            job: s.id,
+            url: s.url,
+            audioOnly: dlAudioOnly,
+            maxHeight: dlMaxHeight,
+            mode: dlMode,
+            audio: dlAudio,
+            audioKbps: dlKbps,
+            playlist: dlPlaylist,
+            codec: dlCodec,
+            hwAccel,
+            outDir
+          }
+        });
+        s.file = files[0];
+        s.count = files.length;
+        s.status = 'done';
+        s.percent = 100;
+      } catch (e) {
+        if (String(e) === 'cancelled') s.status = 'cancelled';
+        else {
+          s.status = 'error';
+          s.error = String(e);
+        }
+      }
+    }
+    dlRunning = false;
+  }
+
+  function cancelDownloads() {
+    dlStop = true;
+    for (const s of dlItems) if (s.status === 'running') invoke('cancel', { job: s.id });
+  }
+
+  function removeDownload(id: number) {
+    if (dlItems.find((x) => x.id === id)?.status === 'running') invoke('cancel', { job: id });
+    dlItems = dlItems.filter((x) => x.id !== id);
+  }
+
   let url = $state('');
   let loading = $state(false);
   let error = $state('');
@@ -136,6 +228,14 @@
     maxHeight = saved.maxHeight ?? 0;
     codec = saved.codec && saved.codec !== 'auto' ? saved.codec : 'h264';
     hwAccel = saved.hwAccel ?? true;
+    dlAudioOnly = saved.dlAudioOnly ?? false;
+    dlMaxHeight = saved.dlMaxHeight ?? 0;
+    dlMode = saved.dlMode ?? 'merge';
+    dlAudio = saved.dlAudio ?? 'aac';
+    dlCodec = saved.dlCodec ?? 'h264';
+    dlKbps = saved.dlKbps ?? 192;
+    dlPlaylist = saved.dlPlaylist ?? false;
+    dlAuto = saved.dlAuto ?? true;
     updateYtdlp(); // 앱을 열 때마다 yt-dlp 최신 버전 확인
     invoke<string | null>('hw_encoder')
       .then((e) => (hwEnc = e))
@@ -151,6 +251,11 @@
           s.percent = e.payload.percent;
           s.phase = e.payload.phase;
         }
+        const d = dlItems.find((x) => x.id === e.payload.job);
+        if (d) {
+          d.percent = e.payload.percent;
+          d.phase = e.payload.phase;
+        }
       }
     );
     return () => {
@@ -159,7 +264,7 @@
   });
 
   $effect(() => {
-    localStorage.setItem('cut-dlp', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir }));
+    localStorage.setItem('cut-dlp', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir, dlAudioOnly, dlMaxHeight, dlMode, dlAudio, dlCodec, dlKbps, dlPlaylist, dlAuto }));
   });
 
   async function load() {
@@ -325,6 +430,7 @@
       return;
     }
     if (t.closest('input, select, textarea')) return;
+    if (tab !== 'slice') return;
     if (e.key === '?') {
       showHelp = !showHelp;
       e.preventDefault();
@@ -372,6 +478,13 @@
 <svelte:window onkeydown={onKey} />
 
 <main>
+  <nav class="tabs">
+    <button class:on={tab === 'slice'} onclick={() => (tab = 'slice')}><i class="ti ti-scissors"></i> 자르기</button>
+    <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> 다운로드</button>
+  </nav>
+
+  <!-- 탭을 바꿔도 플레이어와 지정한 구간이 유지되도록 숨기기만 한다 -->
+  <div class="pane" class:off={tab !== 'slice'}>
   <header class="bar">
     <i class="ti ti-link icon"></i>
     <input
@@ -587,6 +700,118 @@
       </div>
     </aside>
   </div>
+  </div>
+
+  <div class="pane" class:off={tab !== 'download'}>
+    <header class="bar">
+      <i class="ti ti-link icon"></i>
+      <input
+        class="url"
+        placeholder="주소를 붙여넣고 Enter — 큐에 바로 추가"
+        bind:value={dlUrl}
+        onkeydown={(e) => e.key === 'Enter' && addDownload()}
+      />
+      <button onclick={addDownload} disabled={!dlUrl.trim()}>큐에 추가</button>
+    </header>
+
+    <div class="cols">
+      <section class="left">
+        <div class="opts dlopts">
+          <h3>다운로드 옵션</h3>
+          <label class="check"><input type="checkbox" bind:checked={dlAuto} /> 큐에 추가하면 바로 다운로드</label>
+          <label title="재생목록 주소일 때 첫 번째 영상만 받을지, 전체를 받을지 정합니다.">재생목록
+            <select bind:value={dlPlaylist}>
+              <option value={false}>첫 번째 영상만</option>
+              <option value={true}>전체 다운로드</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" bind:checked={dlAudioOnly} /> 오디오만</label>
+          <label title="오디오가 AAC/MP3가 아니면(opus 등) 선택한 형식으로 변환합니다.">오디오 형식
+            <select bind:value={dlAudio}>
+              <option value="aac">AAC</option>
+              <option value="mp3">MP3</option>
+            </select>
+          </label>
+          <label title="오디오를 인코딩할 때의 비트레이트입니다. 이미 선택한 형식이면 다시 인코딩하지 않는 영상 파일에는 적용되지 않습니다.">오디오 비트레이트
+            <select bind:value={dlKbps}>
+              {#each [128, 192, 256, 320] as k}<option value={k}>{k} kbps</option>{/each}
+            </select>
+          </label>
+          {#if !dlAudioOnly}
+            <label title="합치기: 최고 화질 영상과 오디오를 따로 받아 mp4로 합칩니다. 원본: 합쳐지지 않은 단일 파일을 그대로 받습니다.">다운로드 방식
+              <select bind:value={dlMode}>
+                <option value="merge">영상+오디오 합치기 (최고 화질)</option>
+                <option value="original">원본 (합치지 않은 단일 파일)</option>
+              </select>
+            </label>
+            <label title="선택한 코덱을 영상이 제공하면 그대로 받고, 없으면 받은 뒤 그 코덱으로 자동 인코딩합니다. 원본 유지는 VP9·AV1·H.264 외 코덱만 H.264로 변환합니다.">영상 코덱
+              <select bind:value={dlCodec}>
+                <option value="h264">H.264 (호환성 최고)</option>
+                <option value="vp9">VP9</option>
+                <option value="av1">AV1</option>
+                <option value="auto">원본 유지 (VP9·AV1·H.264 외에만 H.264)</option>
+              </select>
+            </label>
+            <label>최대 화질
+              <select bind:value={dlMaxHeight}>
+                <option value={0}>최고 화질 (자동)</option>
+                {#each [360, 480, 720, 1080, 1440, 2160] as h}<option value={h}>{h}p 이하</option>{/each}
+              </select>
+            </label>
+          {/if}
+        </div>
+      </section>
+
+      <aside>
+        <div class="ahead"><h3>목록 ({dlItems.length})</h3></div>
+        <ul>
+          {#each dlItems as s (s.id)}
+            <li class={s.status}>
+              <div class="row">
+                <span class="grow"></span>
+                {#if s.status === 'done' && s.file}
+                  <button class="mini" onclick={() => revealItemInDir(s.file!)}>폴더</button>
+                {/if}
+                <button class="mini" onclick={() => removeDownload(s.id)} title="삭제" aria-label="삭제">
+                  <i class="ti ti-x"></i>
+                </button>
+              </div>
+              <div class="name" title={s.file ?? s.url}>{s.file ? baseName(s.file) : s.url}</div>
+              {#if s.status === 'running'}
+                <div class="st run">{s.phase === 'encode' ? '변환 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
+                <progress max="100" value={s.percent}></progress>
+              {:else if s.status === 'error'}
+                <div class="err">{s.error}</div>
+              {:else}
+                <div class="st {s.status}">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}{s.status === 'done' && (s.count ?? 0) > 1 ? ` · ${s.count}개` : ''}</div>
+              {/if}
+            </li>
+          {:else}
+            <li class="empty">
+              <i class="ti ti-playlist-add big"></i>
+              <div>주소를 추가하세요</div>
+            </li>
+          {/each}
+        </ul>
+
+        {#if dlRunning}
+          <button class="danger" onclick={cancelDownloads}>중지</button>
+        {:else}
+          <button class="primary" onclick={runDownloads} disabled={dlPending === 0 || ytBusy}>
+            {dlPending > 0 ? `${dlPending}개 다운로드` : '다운로드'}
+          </button>
+        {/if}
+        <div class="folder">
+          <button class="path" onclick={pickDir} title="클릭해서 저장 폴더 변경: {outDir}">
+            <i class="ti ti-folder"></i><span>{outDir}</span>
+          </button>
+          <button class="mini" onclick={openOutDir} title="저장 폴더 열기" aria-label="저장 폴더 열기">
+            <i class="ti ti-folder-open"></i>
+          </button>
+        </div>
+      </aside>
+    </div>
+  </div>
 
   {#if showHelp}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -638,6 +863,37 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .tabs button {
+    padding: 4px 12px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .tabs button.on {
+    background: var(--text);
+    border-color: var(--text);
+    color: #fff;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    min-height: 0;
+  }
+  .pane.off {
+    display: none;
+  }
+  .dlopts {
+    border: 0;
+    max-height: none;
+    overflow: visible;
+    max-width: 360px;
   }
   .bar {
     display: flex;

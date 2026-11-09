@@ -424,6 +424,9 @@ fn encode_args(
 struct Outcome {
     code: Option<i32>,
     file: Option<String>,
+    /// 재생목록이면 항목마다 하나씩. metas는 yt-dlp가 알려준 "vcodec acodec duration height" (CUTDLP_META)이며 files와 같은 순서
+    files: Vec<String>,
+    metas: Vec<String>,
     last_error: String,
     cancelled: bool,
 }
@@ -441,6 +444,7 @@ async fn run_job(
     jobs.0.lock().unwrap().insert(job, child);
 
     let mut file: Option<String> = None;
+    let (mut files, mut metas) = (Vec::<String>::new(), Vec::<String>::new());
     let mut last_error = String::new();
     let mut code: Option<i32> = None;
 
@@ -450,6 +454,11 @@ async fn run_job(
                 let s = String::from_utf8_lossy(&b).to_string();
                 if let Some(p) = s.trim().strip_prefix("CUTDLP_FILE ") {
                     file = Some(p.trim().to_string());
+                    files.push(p.trim().to_string());
+                    continue;
+                }
+                if let Some(p) = s.trim().strip_prefix("CUTDLP_META ") {
+                    metas.push(p.trim().to_string());
                     continue;
                 }
                 if s.contains("ERROR") || s.contains("Error") {
@@ -470,7 +479,7 @@ async fn run_job(
 
     // cancel()에서 이미 제거했다면 사용자가 취소한 것
     let cancelled = jobs.0.lock().unwrap().remove(&job).is_none();
-    Ok(Outcome { code, file, last_error, cancelled })
+    Ok(Outcome { code, file, files, metas, last_error, cancelled })
 }
 
 /// 미리보기 스트림을 중계하는 로컬 프록시 상태
@@ -562,6 +571,8 @@ async fn stream_url(
         [
             "-g",
             "--no-playlist",
+            "--playlist-items",
+            "1",
             "--no-warnings",
             "-f",
             "18/b[height<=480][acodec!=none][protocol=https]/bv*[height<=480][protocol=https]/b[height<=480]",
@@ -605,7 +616,7 @@ async fn stream_url(
 #[tauri::command]
 async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     let mut args = base_args()?;
-    args.extend(["-J", "--no-playlist", "--no-warnings"].map(String::from));
+    args.extend(["-J", "--no-playlist", "--playlist-items", "1", "--no-warnings"].map(String::from));
     args.push(url);
 
     let out = ytdlp_cmd(&app)
@@ -625,7 +636,11 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
         return Err(line.trim().to_string());
     }
 
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let mut v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    // 재생목록 주소면 첫 번째 영상만 사용한다
+    if let Some(first) = v["entries"].as_array().and_then(|a| a.first()).cloned() {
+        v = first;
+    }
 
     // 제공되는 (코덱, 높이) 조합 수집
     // HLS(m3u8) 포맷은 제외한다: 구간 수신이 비효율적이고 재인코딩 시 코덱이 바뀌는 문제가 있었다.
@@ -744,7 +759,8 @@ fn build_dl_args(
     let cap = req.max_height;
     let mut args = base_args()?;
     args.extend(
-        ["--newline", "--no-playlist", "--windows-filenames", "--no-mtime"].map(String::from),
+        ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime"]
+            .map(String::from),
     );
     args.push("--download-sections".into());
     args.push(format!("*{}-{}", req.start, req.end));
@@ -930,6 +946,253 @@ async fn download(
     Ok(final_path)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlainReq {
+    job: u32,
+    url: String,
+    audio_only: bool,
+    /// 0 = 제한 없음
+    max_height: u32,
+    /// "merge": 최고 화질 영상+오디오를 받아 mp4로 합친다 / "original": 합치지 않은 단일 포맷 그대로
+    mode: String,
+    /// 오디오 저장 형식: "aac" | "mp3"
+    audio: String,
+    /// 오디오 비트레이트(kbps)
+    audio_kbps: u32,
+    /// true: 재생목록 전체, false: 첫 번째 영상만
+    playlist: bool,
+    /// 영상 코덱: "h264" | "vp9" | "av1" | "auto"(h264/vp9/av1은 그대로, 그 외만 H.264)
+    codec: String,
+    hw_accel: bool,
+    out_dir: String,
+}
+
+/// 받은 결과를 정리하는 ffmpeg 인자. 영상은 선택한 코덱과 다르면 그 코덱으로(auto는 지원 밖 코덱만 H.264로),
+/// 오디오는 선택한 형식(aac/mp3)이 아니면 변환한다. 손댈 것이 없으면 None.
+fn tidy_args(
+    meta: &str,
+    codec: &str,
+    audio: &str,
+    kbps: u32,
+    input: &str,
+    output: &str,
+    h264_enc: &str,
+    hw: Option<&str>,
+) -> Option<Vec<String>> {
+    let mut it = meta.split_whitespace();
+    let (vcodec, acodec) = (it.next().unwrap_or("NA"), it.next().unwrap_or("NA"));
+    let height: u32 = it.nth(1).and_then(|h| h.parse().ok()).unwrap_or(1080);
+    let have = norm_codec(vcodec);
+    let video_ok = if codec == "auto" { have.is_some() } else { have == Some(codec) };
+    let audio_ok = match audio {
+        "mp3" => acodec.starts_with("mp3"),
+        _ => acodec.starts_with("mp4a"),
+    };
+    if video_ok && audio_ok {
+        return None;
+    }
+    let mut a: Vec<String> = ["-hide_banner", "-y", "-i", input].map(String::from).to_vec();
+    if video_ok {
+        a.extend(["-c:v", "copy"].map(String::from));
+    } else if codec == "vp9" {
+        a.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-row-mt", "1"].map(String::from));
+    } else if codec == "av1" {
+        a.extend(
+            ["-c:v", "libaom-av1", "-crf", "30", "-b:v", "0", "-cpu-used", "6", "-row-mt", "1"]
+                .map(String::from),
+        );
+    } else if let Some(enc) = hw {
+        a.extend(hw_h264_args(enc));
+    } else if h264_enc == "libx264" {
+        a.extend(
+            ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"].map(String::from),
+        );
+    } else {
+        a.extend(
+            ["-c:v", h264_enc, "-b:v", target_bitrate(height), "-pix_fmt", "yuv420p"].map(String::from),
+        );
+    }
+    if audio_ok {
+        a.extend(["-c:a", "copy"].map(String::from));
+    } else if audio == "mp3" {
+        a.extend(["-c:a", "libmp3lame", "-b:a", &format!("{kbps}k")].map(String::from));
+    } else {
+        a.extend(["-c:a", "aac", "-b:a", &format!("{kbps}k")].map(String::from));
+    }
+    a.extend(["-movflags", "+faststart", output].map(String::from));
+    Some(a)
+}
+
+/// 임시 폴더에서 영상 전체를 받는다. 합치기 모드에서는 받은 결과의 코덱을 확인해
+/// 지원 목록 밖의 영상 코덱은 H.264로, aac/mp3가 아닌 오디오는 선택한 형식으로 변환한다.
+async fn plain_inner(
+    app: &AppHandle,
+    jobs: &State<'_, Jobs>,
+    hw_cache: &State<'_, HwCache>,
+    req: PlainReq,
+) -> Result<Vec<String>, String> {
+    std::fs::create_dir_all(&req.out_dir).map_err(|e| e.to_string())?;
+    let out_dir = req.out_dir.trim_end_matches(['/', '\\']).to_string();
+    let merge = req.mode != "original";
+    let cap = req.max_height;
+    let hf = if cap == 0 { String::new() } else { format!("[height<={cap}]") };
+    // 선택한 코덱을 제공하면 그 스트림을 우선 받아 변환을 피한다 (없으면 최고 화질로 받아 변환)
+    let pref = match req.codec.as_str() {
+        "h264" | "vp9" | "av1" => format!("[vcodec^={}]", codec_prefix(&req.codec)),
+        _ => String::new(),
+    };
+
+    let mut args = base_args()?;
+    args.extend(["--newline", "--windows-filenames", "--no-mtime"].map(String::from));
+    if req.playlist {
+        args.push("--yes-playlist".into());
+    } else {
+        args.extend(["--no-playlist", "--playlist-items", "1"].map(String::from));
+    }
+    if req.audio_only {
+        let fmt = if req.audio == "mp3" { "mp3" } else { "m4a" };
+        args.extend(["-x", "--audio-format", fmt, "-f", "ba/b"].map(String::from));
+        args.extend(["--audio-quality".to_string(), format!("{}K", req.audio_kbps)]);
+    } else if merge {
+        args.extend(["-f".to_string(), format!("bv*{pref}{hf}+ba/bv*{hf}+ba/b{hf}"), "--merge-output-format".into(), "mp4".into()]);
+    } else {
+        args.extend(["-f".to_string(), format!("b{pref}{hf}/b{hf}/bv*{hf}+ba")]);
+    }
+    args.extend([
+        "-o".into(),
+        // 재생목록의 같은 제목 영상이 서로 덮어쓰지 않도록 항목별 하위 폴더에 받는다
+        format!("{out_dir}/%(playlist_index|1)s/%(title).120B.%(ext)s"),
+        "--print".into(),
+        "after_move:CUTDLP_FILE %(filepath)s".into(),
+        "--print".into(),
+        "after_move:CUTDLP_META %(vcodec)s %(acodec)s %(duration)s %(height)s".into(),
+        req.url.clone(),
+    ]);
+
+    let r = {
+        let cmd = ytdlp_cmd(app).await?.args(args);
+        run_job(app, jobs, req.job, cmd, 100.0, "download").await?
+    };
+    if r.cancelled {
+        return Err("cancelled".into());
+    }
+    // 재생목록은 일부 항목이 실패해도 받은 것은 저장한다
+    if r.code != Some(0) && !(req.playlist && !r.files.is_empty()) {
+        return Err(if r.last_error.is_empty() {
+            "다운로드에 실패했습니다".into()
+        } else {
+            r.last_error
+        });
+    }
+    if r.files.is_empty() {
+        return Ok(vec![]);
+    }
+    if req.audio_only {
+        return Ok(r.files);
+    }
+    let h264_enc = h264_encoder(app).await;
+    let mut out = Vec::new();
+    for (i, file) in r.files.iter().enumerate() {
+        let done = match r.metas.get(i) {
+            Some(meta) => tidy_one(app, jobs, hw_cache, &req, &h264_enc, file, meta).await?,
+            None => file.clone(),
+        };
+        out.push(done);
+    }
+    Ok(out)
+}
+
+/// 받은 파일 하나의 코덱을 확인해 선택한 코덱·오디오 형식과 다르면 변환한다. 결과 파일 경로를 돌려준다.
+async fn tidy_one(
+    app: &AppHandle,
+    jobs: &State<'_, Jobs>,
+    hw_cache: &State<'_, HwCache>,
+    req: &PlainReq,
+    h264_enc: &str,
+    downloaded: &str,
+    meta: &str,
+) -> Result<String, String> {
+    if tidy_args(meta, &req.codec, &req.audio, req.audio_kbps, downloaded, "", h264_enc, None).is_none() {
+        return Ok(downloaded.to_string());
+    }
+    let hw = if req.hw_accel && matches!(req.codec.as_str(), "h264" | "auto") {
+        detect_hw(app, hw_cache).await
+    } else {
+        None
+    };
+    let span = meta
+        .split_whitespace()
+        .nth(2)
+        .and_then(|d| d.parse::<f64>().ok())
+        .filter(|d| *d > 0.0)
+        .unwrap_or(1e9);
+
+    // 원본 모드의 webm/mkv는 aac/mp3를 담을 수 없으므로 변환이 필요하면 mp4로 저장한다
+    let final_path = Path::new(downloaded).with_extension("mp4");
+    let tmp_out = Path::new(downloaded).with_extension("tidy.mp4").to_string_lossy().into_owned();
+    let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
+    let run = |hw: Option<&str>| -> Result<Command, String> {
+        let args = tidy_args(meta, &req.codec, &req.audio, req.audio_kbps, downloaded, &tmp_out, h264_enc, hw)
+            .unwrap_or_default();
+        Ok(app.shell().sidecar("ffmpeg").map_err(|e| e.to_string())?.args(args))
+    };
+    let mut e = run_job(app, jobs, req.job, run(hw.as_deref())?, span, "encode").await?;
+    if hw.is_some() && !e.cancelled && e.code != Some(0) {
+        e = run_job(app, jobs, req.job, run(None)?, span, "encode").await?;
+    }
+    if e.cancelled || e.code != Some(0) {
+        let _ = std::fs::remove_file(&tmp_out);
+        if e.cancelled {
+            return Err("cancelled".into());
+        }
+        return Err(if e.last_error.is_empty() { "변환에 실패했습니다".into() } else { e.last_error });
+    }
+    if final_path != Path::new(downloaded) {
+        let _ = std::fs::remove_file(downloaded);
+    }
+    std::fs::rename(&tmp_out, &final_path).map_err(|e| e.to_string())?;
+    Ok(final_path.to_string_lossy().into_owned())
+}
+
+/// 파일을 폴더로 옮긴다. 같은 이름이 있으면 `이름_1`, `이름_2`… 로 겹치지 않게 저장한다.
+fn move_unique(src: &str, dir: &str) -> Result<String, String> {
+    let src = Path::new(src);
+    if !src.is_file() {
+        return Ok(dir.to_string());
+    }
+    let stem = src.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let mut dest = Path::new(dir).join(format!("{stem}{ext}"));
+    let mut n = 1;
+    while dest.exists() {
+        dest = Path::new(dir).join(format!("{stem}_{n}{ext}"));
+        n += 1;
+    }
+    std::fs::rename(src, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// 구간 없이 영상 전체를 받는다. 원본 제목으로 저장하고, 중복되면 _1, _2… 를 붙인다.
+/// 합치기 모드에서는 받은 결과의 코덱을 확인해 선택한 코덱·오디오 형식과 다르면 변환한다.
+#[tauri::command]
+async fn download_plain(
+    app: AppHandle,
+    jobs: State<'_, Jobs>,
+    hw_cache: State<'_, HwCache>,
+    mut req: PlainReq,
+) -> Result<Vec<String>, String> {
+    let dir = req.out_dir.trim_end_matches(['/', '\\']).to_string();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // 같은 이름 파일을 덮어쓰거나 건너뛰지 않도록 임시 폴더에서 받은 뒤 옮긴다
+    let tmp = format!("{dir}/.cutdlp-tmp-{}", req.job);
+    req.out_dir = tmp.clone();
+    let res = plain_inner(&app, &jobs, &hw_cache, req).await;
+    let out = res.and_then(|ps| ps.iter().map(|p| move_unique(p, &dir)).collect());
+    let _ = std::fs::remove_dir_all(&tmp);
+    out
+}
+
 #[tauri::command]
 fn cancel(jobs: State<'_, Jobs>, job: u32) {
     if let Some(child) = jobs.0.lock().unwrap().remove(&job) {
@@ -950,6 +1213,7 @@ pub fn run() {
             fetch_info,
             stream_url,
             download,
+            download_plain,
             cancel,
             ytdlp_update,
             hw_encoder
