@@ -44,7 +44,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMxMkZDNjg2Qzg0MTYwQTkKUldTcFlFSEloc1l2TVdkWGwzcE4xVDRiQVNYTHkwSjU3bWdOWU1jT241YjlIdW9OMjQ4cG9TRC8K",
-      "endpoints": ["https://github.com/roro128/slice-youtube/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/nopushfriday/slice-youtube/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" }
     }
   }

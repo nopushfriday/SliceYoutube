@@ -12,7 +12,7 @@ Tauri 2 · Svelte 5 · yt-dlp
 
 ## 설치
 
-[Releases](https://github.com/roro128/slice-youtube/releases)에서 받습니다.
+[Releases](https://github.com/nopushfriday/slice-youtube/releases)에서 받습니다.
 
 - `slice-youtube_<버전>_x64-setup.exe` — 설치 파일
 - `slice-youtube-<버전>-portable-x64.zip` — 압축만 풀면 실행되는 포터블 버전
