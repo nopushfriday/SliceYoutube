@@ -5,6 +5,8 @@
   import { downloadDir, join } from '@tauri-apps/api/path';
   import { open } from '@tauri-apps/plugin-dialog';
   import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+  import { check, type Update } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
   import Player from '$lib/Player.svelte';
   import StreamPlayer from '$lib/StreamPlayer.svelte';
   import Timeline from '$lib/Timeline.svelte';
@@ -40,6 +42,40 @@
     ['\\', '구간 반복 켜기/끄기'],
     ['?', '이 도움말']
   ];
+
+  // 앱 업데이트: 새 버전이 있으면 받아서 교체한 뒤 다시 시작한다
+  let upd = $state<Update | null>(null);
+  let updBusy = $state(false);
+  let updPct = $state(0);
+
+  async function checkUpdate() {
+    try {
+      upd = await check();
+    } catch {
+      // 오프라인이거나 개발 실행이면 조용히 넘어간다
+    }
+  }
+
+  async function installUpdate() {
+    if (!upd || updBusy) return;
+    updBusy = true;
+    updPct = 0;
+    let total = 0;
+    let got = 0;
+    try {
+      await upd.downloadAndInstall((ev) => {
+        if (ev.event === 'Started') total = ev.data.contentLength ?? 0;
+        else if (ev.event === 'Progress') {
+          got += ev.data.chunkLength;
+          updPct = total ? Math.round((got / total) * 100) : 0;
+        }
+      });
+      await relaunch();
+    } catch (e) {
+      error = `업데이트에 실패했습니다: ${e}`;
+      updBusy = false;
+    }
+  }
 
   // 탭: 자르기(구간 지정·화면 자르기·다운로드) / 다운로드(작업 없이 그대로 받기)
   let tab = $state<'slice' | 'download'>('slice');
@@ -251,6 +287,7 @@
     dlKbps = saved.dlKbps ?? 192;
     dlPlaylist = saved.dlPlaylist ?? false;
     dlAuto = saved.dlAuto ?? true;
+    checkUpdate();
     updateYtdlp(); // 앱을 열 때마다 yt-dlp 최신 버전 확인
     invoke<string | null>('hw_encoder')
       .then((e) => (hwEnc = e))
@@ -503,6 +540,13 @@
   <nav class="tabs">
     <button class:on={tab === 'slice'} onclick={() => (tab = 'slice')}><i class="ti ti-scissors"></i> 자르기</button>
     <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> 다운로드</button>
+    <span class="grow"></span>
+    {#if upd}
+      <button class="upd" onclick={installUpdate} disabled={updBusy || running || dlRunning} title="작업이 끝난 뒤 업데이트할 수 있습니다">
+        <i class="ti {updBusy ? 'ti-loader-2 spin' : 'ti-arrow-up-circle'}"></i>
+        {updBusy ? `업데이트 중 ${updPct}%` : `v${upd.version} 업데이트`}
+      </button>
+    {/if}
   </nav>
 
   <!-- 탭을 바꿔도 플레이어와 지정한 구간이 유지되도록 숨기기만 한다 -->
@@ -918,6 +962,11 @@
   .tabs button.on {
     background: var(--text);
     border-color: var(--text);
+    color: #fff;
+  }
+  .tabs button.upd {
+    background: var(--accent);
+    border-color: var(--accent);
     color: #fff;
   }
   .pane {

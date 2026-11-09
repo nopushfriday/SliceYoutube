@@ -113,6 +113,10 @@ jobs:
 
       - name: 빌드
         run: pnpm tauri build
+        env:
+          # 자동 업데이트 파일(.sig) 서명용 키 (로컬: ~/.tauri/slice-youtube.key)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: 포터블 zip 만들기
         if: matrix.name == 'windows'
@@ -139,8 +143,10 @@ jobs:
           if-no-files-found: error
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
             dist/*.zip
             src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
             src-tauri/target/release/bundle/dmg/*.dmg
 
   publish:
@@ -162,10 +168,13 @@ jobs:
           mapfile -t FILES < <(find release-files -type f | sort)
           ls -l "${FILES[@]}"
           # 설치 파일, 포터블 zip, AppImage 가 모두 있어야 한다
-          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage'; do
+          for pat in '*-setup.exe' '*-portable-x64.zip' '*.AppImage' '*-setup.exe.sig' '*.AppImage.sig'; do
             [ -n "$(find release-files -type f -name "$pat" -print -quit)" ] || { echo "::error::배포 파일이 없습니다: $pat"; exit 1; }
           done
           VER="${{ needs.prepare.outputs.version }}"
+          # 자동 업데이트용 latest.json (앱이 이 파일로 새 버전을 확인한다)
+          VER="$VER" REPO="$GITHUB_REPOSITORY" node scripts/make-latest-json.cjs release-files
+          mapfile -t FILES < <(find release-files -type f | sort)
           # 태그가 없으므로 gh 가 이 커밋에 v$VER 태그를 만든다
           gh release create "v$VER" "${FILES[@]}" \
             --target "$GITHUB_SHA" \
