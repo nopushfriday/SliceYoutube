@@ -18,14 +18,28 @@ OUT="$ROOT/src-tauri/binaries/ffmpeg-$TRIPLE"             # Tauri externalBin �
 JOBS="$(sysctl -n hw.ncpu)"
 
 echo "== 의존 패키지 설치"
-brew install nasm pkg-config openh264 libvpx aom opus lame
+brew install nasm pkg-config libvpx aom opus lame
+
+# Homebrew 의 openh264 는 .dylib 만 있어 정적 라이브러리가 없다. 소스(BSD)로 직접 빌드한다.
+OH_VER="${OPENH264_VERSION:-2.6.0}"
+OH="$WORK/openh264-install"
+if [ ! -f "$OH/lib/libopenh264.a" ]; then
+  echo "== openh264 $OH_VER 소스 빌드 (정적)"
+  mkdir -p "$WORK" && cd "$WORK"
+  curl -fsSL --retry 3 -o "openh264-$OH_VER.tar.gz" "https://github.com/cisco/openh264/archive/refs/tags/v$OH_VER.tar.gz"
+  rm -rf openh264-src && mkdir openh264-src
+  tar -xf "openh264-$OH_VER.tar.gz" -C openh264-src --strip-components=1
+  (cd openh264-src && make -j"$JOBS" OS=darwin ARCH=arm64 PREFIX="$OH" install-static)
+  cd "$ROOT"
+fi
+export PKG_CONFIG_PATH="$OH/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
 echo "== 정적 라이브러리 확인 (.a 만 모은 폴더를 먼저 검색하게 해 .dylib 링크를 막는다)"
 STATIC="$WORK/static-libs"
 rm -rf "$STATIC" && mkdir -p "$STATIC"
 for pair in openh264:openh264 vpx:vpx aom:aom opus:opus mp3lame:lame; do
   name="${pair%%:*}"; formula="${pair##*:}"
-  A="$(brew --prefix "$formula")/lib/lib$name.a"
+  if [ "$name" = openh264 ]; then A="$OH/lib/libopenh264.a"; else A="$(brew --prefix "$formula")/lib/lib$name.a"; fi
   [ -f "$A" ] || { echo "정적 라이브러리 없음: $A (직접 빌드가 필요합니다)"; exit 1; }
   ln -s "$A" "$STATIC/"
 done
@@ -43,7 +57,7 @@ cd src-macos
 echo "== configure"
 ./configure \
   --cc=clang \
-  --extra-cflags="-I$(brew --prefix)/include" \
+  --extra-cflags="-I$OH/include -I$(brew --prefix)/include" \
   --extra-ldflags="-L$STATIC -L$(brew --prefix)/lib" \
   --extra-libs="-lc++ -lm -lpthread" \
   --disable-everything --disable-autodetect \
