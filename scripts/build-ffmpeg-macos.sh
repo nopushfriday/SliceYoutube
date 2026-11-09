@@ -37,7 +37,7 @@ export PKG_CONFIG_PATH="$OH/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 echo "== 정적 라이브러리 확인 (.a 만 모은 폴더를 먼저 검색하게 해 .dylib 링크를 막는다)"
 STATIC="$WORK/static-libs"
 rm -rf "$STATIC" && mkdir -p "$STATIC"
-for pair in openh264:openh264 vpx:vpx aom:aom opus:opus mp3lame:lame; do
+for pair in openh264:openh264 vpx:libvpx aom:aom opus:opus mp3lame:lame; do
   name="${pair%%:*}"; formula="${pair##*:}"
   if [ "$name" = openh264 ]; then A="$OH/lib/libopenh264.a"; else A="$(brew --prefix "$formula")/lib/lib$name.a"; fi
   [ -f "$A" ] || { echo "정적 라이브러리 없음: $A (직접 빌드가 필요합니다)"; exit 1; }
