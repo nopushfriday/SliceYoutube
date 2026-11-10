@@ -1069,6 +1069,7 @@
     font-size: 18px;
   }
   .tabs > button {
+    white-space: nowrap;
     padding: 4px 10px;
     font-size: 12.5px;
     color: var(--muted);
@@ -1086,7 +1087,8 @@
     border-radius: 10px;
   }
   .seg button {
-    flex: 1;
+    flex: 1 0 auto;
+    white-space: nowrap;
     border: 0;
     background: transparent;
     color: var(--muted);
