@@ -125,7 +125,7 @@ bash scripts/verify-build-macos.sh   # 결과물 검증 (선택)
 |---|---|---|
 | yt-dlp | Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) |
 | deno | MIT | [denoland/deno](https://github.com/denoland/deno) |
-| ffmpeg | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
+| ffmpeg (경량 컴파일 버전) | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
 
 ## 라이선스
 

@@ -125,7 +125,7 @@ The app ships the programs below as separate executables (sidecars) and runs the
 |---|---|---|
 | yt-dlp | Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) |
 | deno | MIT | [denoland/deno](https://github.com/denoland/deno) |
-| ffmpeg | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
+| ffmpeg (lightweight custom build) | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
 
 ## License
 
