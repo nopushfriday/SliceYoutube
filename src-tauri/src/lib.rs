@@ -158,6 +158,15 @@ fn one_line(s: &str) -> String {
     s.split(['\r', '\n']).map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
+/// sidecar가 출력한 경로가 작업 폴더 안인지 확인한다.
+/// 출력은 영상 제목 같은 외부 값이 섞일 수 있어, 그대로 믿고 삭제·이동하면 안 된다.
+fn within(dir: &str, file: &str) -> bool {
+    match (std::fs::canonicalize(dir), std::fs::canonicalize(file)) {
+        (Ok(d), Ok(f)) => f.starts_with(d),
+        _ => false,
+    }
+}
+
 const CHZZK_API: &str = "https://api.chzzk.naver.com/service/v1";
 
 /// 치지직 쇼츠/클립 주소(chzzk.naver.com/shorts/ID, /clips/ID)에서 ID를 꺼낸다.
@@ -192,6 +201,11 @@ async fn chzzk_get(client: &reqwest::Client, path: &str) -> Result<serde_json::V
 /// yt-dlp가 지원하지 않는 주소(치지직 쇼츠/클립)는 재생 매니페스트(MPD) 주소로 바꿔 넘긴다.
 /// 매니페스트는 일반 DASH라 이후의 포맷 선택·구간 다운로드는 그대로 동작한다.
 async fn resolve_url(url: &str) -> Result<Resolved, String> {
+    // 클립보드 등으로 들어온 `--exec=…` 같은 값이 yt-dlp 옵션으로 해석되지 않도록 막는다
+    let url = url.trim();
+    if url.is_empty() || url.starts_with('-') {
+        return Err("올바른 주소가 아닙니다".into());
+    }
     let Some(id) = chzzk_clip_id(url) else {
         return Ok(Resolved::plain(url));
     };
@@ -694,6 +708,7 @@ async fn stream_url(
         ]
         .map(String::from),
     );
+    args.push("--".into());
     args.push(resolve_url(&url).await?.url);
     let out = ytdlp_cmd(&app)
         .await?
@@ -733,6 +748,7 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     let resolved = resolve_url(&url).await?;
     let mut args = base_args()?;
     args.extend(["-J", "--no-playlist", "--playlist-items", "1", "--no-warnings"].map(String::from));
+    args.push("--".into());
     args.push(resolved.url.clone());
 
     let out = ytdlp_cmd(&app)
@@ -931,6 +947,7 @@ fn build_dl_args(
         ),
     ]);
     args.extend(["--print".into(), "after_move:CUTDLP_FILE %(filepath)s".into()]);
+    args.push("--".into());
     args.push(resolved.url.clone());
     Ok(args)
 }
@@ -1027,6 +1044,10 @@ async fn download(
     let Some(downloaded) = r.file else {
         return Ok(req.out_dir);
     };
+    if !within(&dl_dir, &downloaded) {
+        cleanup(&tmp_dir);
+        return Err("받은 파일의 경로를 확인할 수 없습니다".into());
+    }
     if !reencode {
         return Ok(downloaded);
     }
@@ -1203,10 +1224,11 @@ async fn plain_inner(
         "after_move:CUTDLP_FILE %(filepath)s".into(),
         "--print".into(),
         "after_move:CUTDLP_META %(vcodec)s %(acodec)s %(duration)s %(height)s".into(),
+        "--".into(),
         resolved.url.clone(),
     ]);
 
-    let r = {
+    let mut r = {
         let cmd = ytdlp_cmd(app).await?.args(args);
         run_job(app, jobs, req.job, cmd, 100.0, "download").await?
     };
@@ -1221,6 +1243,16 @@ async fn plain_inner(
             r.last_error
         });
     }
+    // 작업 폴더 밖의 경로는 이후 변환·이동·삭제 대상으로 삼지 않는다
+    let (mut files, mut metas) = (Vec::new(), Vec::new());
+    for (i, f) in r.files.iter().enumerate() {
+        if within(&out_dir, f) {
+            files.push(f.clone());
+            metas.extend(r.metas.get(i).cloned());
+        }
+    }
+    r.files = files;
+    r.metas = metas;
     if r.files.is_empty() {
         return Ok(vec![]);
     }
@@ -1392,6 +1424,40 @@ mod tests {
         assert!(c.validate().is_ok());
         assert!(Crop { left: 60.0, right: 40.0, ..Default::default() }.validate().is_err());
         assert!(Crop { top: -1.0, ..Default::default() }.validate().is_err());
+    }
+
+    #[test]
+    fn within_accepts_only_paths_inside_dir() {
+        let base = std::env::temp_dir().join(format!("cutdlp-within-{}", std::process::id()));
+        let dir = base.join("work");
+        std::fs::create_dir_all(&dir).unwrap();
+        let inside = dir.join("a.mp4");
+        let outside = base.join("b.mp4");
+        std::fs::write(&inside, b"x").unwrap();
+        std::fs::write(&outside, b"x").unwrap();
+        let d = dir.to_string_lossy().replace('\\', "/");
+        assert!(within(&d, &inside.to_string_lossy()));
+        assert!(!within(&d, &outside.to_string_lossy()));
+        assert!(!within(&d, &dir.join("..").join("b.mp4").to_string_lossy()));
+        assert!(!within(&d, &dir.join("missing.mp4").to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn rejects_option_like_urls() {
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        assert!(rt.block_on(resolve_url("--exec=calc")).is_err());
+        assert!(rt.block_on(resolve_url("  -o x")).is_err());
+        assert!(rt.block_on(resolve_url("")).is_err());
+        assert_eq!(rt.block_on(resolve_url(" https://example.com/v ")).unwrap().url, "https://example.com/v");
+    }
+
+    #[test]
+    fn extracts_chzzk_clip_ids() {
+        assert_eq!(chzzk_clip_id("https://chzzk.naver.com/shorts/AZpyKajx3C?x=1"), Some("AZpyKajx3C"));
+        assert_eq!(chzzk_clip_id("https://chzzk.naver.com/clips/abc123#t"), Some("abc123"));
+        assert_eq!(chzzk_clip_id("https://chzzk.naver.com/video/2458"), None);
+        assert_eq!(chzzk_clip_id("https://chzzk.naver.com/clips/a b"), None);
     }
 
     #[test]
