@@ -1,21 +1,40 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128.png" width="96" alt="SliceYoutube icon">
+
 # SliceYoutube
 
 **English** · [한국어](README.ko.md)
 
-A desktop app for Windows, Linux and macOS that downloads **only the part of a YouTube video you need**.
-Tauri 2 · Svelte 5 · yt-dlp
+### Grab just the 10 seconds you want — not the 2-hour video.
 
-![SliceYoutube — a 7.5 s to 12.6 s range of "Me at the zoo" set and queued as a clip](docs/screenshot-slice.jpg)
+[![Windows](https://img.shields.io/badge/Windows-2563eb?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest) [![macOS](https://img.shields.io/badge/macOS-111827?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest) [![Linux](https://img.shields.io/badge/Linux-d97706?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest)
 
-*Watch the video, set the range with `Q` / `W`, press `Enter` to queue it, and only that range is downloaded.*
+[![Release](https://img.shields.io/github/v/release/nopushfriday/slice-youtube?style=flat-square&color=2563eb)](https://github.com/nopushfriday/slice-youtube/releases)
+[![Downloads](https://img.shields.io/github/downloads/nopushfriday/slice-youtube/total?style=flat-square&color=16a34a)](https://github.com/nopushfriday/slice-youtube/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/nopushfriday/slice-youtube/ci.yml?style=flat-square&label=CI)](https://github.com/nopushfriday/slice-youtube/actions/workflows/ci.yml)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-64748b?style=flat-square)
+[![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
+![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?style=flat-square&logo=tauri&logoColor=white)
+![Svelte](https://img.shields.io/badge/Svelte-5-ff3e00?style=flat-square&logo=svelte&logoColor=white)
+
+[Install](#install) · [Usage](#usage) · [Shortcuts](#shortcuts) · [Build](#build)
+
+<img src="docs/screenshot-slice.jpg" width="820" alt="SliceYoutube with a 7.5 s to 12.6 s range of Me at the zoo queued as a clip">
+
+<sub>Watch, set the range with Q / W, press Enter to queue it — only that range is downloaded.</sub>
+
+</div>
 
 ## Features
 
-- Set start and end points while watching, queue several ranges, and download them in order
-- Fetches **only the selected range** with `yt-dlp --download-sections` instead of the whole video
-- Codec choice: Auto / H.264 / VP9 / AV1 (if the video doesn't offer the codec, it is re-encoded after download)
-- Audio-only (mp3) extraction
-- 14 UI languages, picked automatically from your system language and changeable in the app
+- ✂️ **Range-only download** — fetches just the selected part with `yt-dlp --download-sections`, not the whole video
+- 🎯 **Precise range picking** — watch the video, press `Q` / `W` or drag the timeline handles, step frame by frame
+- 📋 **Queue** — add several ranges from one video and download them in order, or auto-download as soon as a range is queued
+- 🎞️ **Codec choice** — Auto / H.264 / VP9 / AV1 (re-encoded after download if the video doesn't offer it), with optional hardware encoding
+- 🎵 **Audio-only (mp3)** and **picture crop**
+- ⬇️ **Plain download tab** — full videos and playlists with merge / original, audio format and bitrate options
+- 🌐 **14 UI languages** — picked from your system language, changeable in the app
 
 ## Install
 
@@ -25,8 +44,6 @@ Download from [Releases](https://github.com/nopushfriday/slice-youtube/releases)
 - `slice-youtube-<version>-portable-x64.zip` — portable build, just unzip and run
 - `slice-youtube_<version>_amd64.AppImage` — Linux (x86_64)
 - `slice-youtube_<version>_aarch64.dmg` — macOS (Apple Silicon)
-
-> The macOS build is distributed without Apple developer signing/notarization, so the first launch shows an "unidentified developer" warning. Click "Open Anyway" in System Settings → Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/slice-youtube.app` in a terminal.
 
 ## Usage
 
@@ -49,6 +66,7 @@ Dragging a timeline handle moves the video position with it; hold `Shift` while 
 
 ### Known issues
 
+- The macOS build is distributed without Apple developer signing/notarization, so the first launch shows an "unidentified developer" warning. Click "Open Anyway" in System Settings → Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/slice-youtube.app` in a terminal.
 - AV1 encoding (the fallback when a video doesn't offer AV1) uses libaom, so it is slower than H.264/VP9.
 
 ## Build
@@ -97,7 +115,6 @@ bash scripts/verify-build-macos.sh   # verify the output (optional)
 
 - The version follows `version` in `src-tauri/tauri.conf.json`. When releasing, bump `version` in `package.json` and `src-tauri/Cargo.toml` too.
 - The sidecar binaries (yt-dlp, deno, ffmpeg) are not in git, so the steps above are needed before `tauri dev` / `tauri build`. For development only, use `pnpm tauri dev` instead of `pnpm tauri build`.
-- The ffmpeg scripts accept `-Version 9.0.2` and `-Hw sw` (no hardware encoders, Windows) to change the version and configuration. The configure options match [`build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml), so change both together.
 - Linux also needs Tauri's [system dependencies](https://v2.tauri.app/start/prerequisites/#linux).
 
 ## Third-party
@@ -109,3 +126,7 @@ The app ships the programs below as separate executables (sidecars) and runs the
 | yt-dlp | Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) |
 | deno | MIT | [denoland/deno](https://github.com/denoland/deno) |
 | ffmpeg | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
+
+## License
+
+[MIT](LICENSE) © 2026 nopushfriday
