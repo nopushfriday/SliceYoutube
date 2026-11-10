@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fade, fly, slide } from 'svelte/transition';
-  import { t, tb, lang, LANGS, type LangPref } from '$lib/i18n.svelte';
-  import type { Key } from '$lib/locales/ko';
+  import { t, tb, lang, LANGS, type LangPref } from '#lib/i18n.svelte.ts';
+  import type { Key } from '#lib/locales/ko.ts';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { downloadDir, homeDir } from '@tauri-apps/api/path';
@@ -10,12 +10,12 @@
   import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import Player from '$lib/Player.svelte';
-  import StreamPlayer from '$lib/StreamPlayer.svelte';
-  import Timeline from '$lib/Timeline.svelte';
-  import ScrubNumber from '$lib/ScrubNumber.svelte';
-  import CropOverlay, { type Crop } from '$lib/CropOverlay.svelte';
-  import { clamp, fmt } from '$lib/util';
+  import Player from '#lib/Player.svelte';
+  import StreamPlayer from '#lib/StreamPlayer.svelte';
+  import Timeline from '#lib/Timeline.svelte';
+  import ScrubNumber from '#lib/ScrubNumber.svelte';
+  import CropOverlay, { type Crop } from '#lib/CropOverlay.svelte';
+  import { clamp, fmt } from '#lib/util.ts';
 
   type Fmt = { codec: 'h264' | 'vp9' | 'av1'; height: number };
   type Info = { id: string; title: string; duration: number; channel: string; aspect: number; embeddable: boolean; live: boolean; formats: Fmt[] };
