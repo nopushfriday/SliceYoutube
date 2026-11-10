@@ -124,11 +124,13 @@ struct Resolved {
     title: Option<String>,
     channel: Option<String>,
     thumbnail: Option<String>,
+    /// 초. 매니페스트만으로는 길이를 알 수 없는 경우를 위한 값
+    duration: Option<f64>,
 }
 
 impl Resolved {
     fn plain(url: &str) -> Self {
-        Resolved { url: url.to_string(), title: None, channel: None, thumbnail: None }
+        Resolved { url: url.to_string(), title: None, channel: None, thumbnail: None, duration: None }
     }
 
     /// 출력 파일명 템플릿의 제목 부분. 직접 알아낸 제목이면 리터럴로 넣는다.
@@ -215,15 +217,15 @@ async fn resolve_url(url: &str) -> Result<Resolved, String> {
         return Err("ERROR: [chzzk:clip] 재생 정보를 찾지 못했습니다 (로그인이 필요한 클립일 수 있습니다)".into());
     };
     // 썸네일은 상세 API에만 있다. 실패해도 다운로드에는 지장이 없다.
-    let thumbnail = chzzk_get(&client, &format!("clips/{id}/detail"))
-        .await
-        .ok()
-        .and_then(|d| d["thumbnailImageUrl"].as_str().map(one_line));
+    let detail = chzzk_get(&client, &format!("clips/{id}/detail")).await.ok();
+    let thumbnail = detail.as_ref().and_then(|d| d["thumbnailImageUrl"].as_str().map(one_line));
+    let duration = detail.as_ref().and_then(|d| d["duration"].as_f64()).filter(|d| *d > 0.0);
     Ok(Resolved {
         url: format!("https://apis.naver.com/neonplayer/vodplay/v2/playback/{video_id}?key={key}"),
         title: play["contentTitle"].as_str().map(one_line).filter(|s| !s.is_empty()),
         channel: play["ownerChannel"]["channelName"].as_str().map(one_line),
         thumbnail,
+        duration,
     })
 }
 
@@ -616,6 +618,16 @@ async fn run_job(
 struct StreamProxy {
     port: tokio::sync::Mutex<Option<u16>>,
     upstream: std::sync::Arc<Mutex<String>>,
+    /// 프록시 주소에 포함되는 실행별 비밀값. 같은 PC의 다른 프로그램·웹페이지가 포트를 추측해 접근하지 못하게 한다.
+    token: std::sync::OnceLock<String>,
+}
+
+fn random_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    // RandomState는 OS 난수로 시드되므로 인스턴스마다 값이 다르다
+    (0..2)
+        .map(|_| format!("{:016x}", std::collections::hash_map::RandomState::new().build_hasher().finish()))
+        .collect()
 }
 
 const PREVIEW_UA: &str =
@@ -623,7 +635,11 @@ const PREVIEW_UA: &str =
 
 /// googlevideo는 브라우저 형태의 User-Agent가 없으면 403을 돌려주고, 웹뷰는 이를 직접 설정할 수 없다.
 /// 그래서 127.0.0.1에서 요청(Range 포함)을 받아 헤더를 붙여 원본으로 전달한다.
-async fn serve_proxy(listener: tokio::net::TcpListener, upstream: std::sync::Arc<Mutex<String>>) {
+async fn serve_proxy(
+    listener: tokio::net::TcpListener,
+    upstream: std::sync::Arc<Mutex<String>>,
+    token: String,
+) {
     use futures_util::StreamExt;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let client = reqwest::Client::new();
@@ -631,10 +647,17 @@ async fn serve_proxy(listener: tokio::net::TcpListener, upstream: std::sync::Arc
         let Ok((mut sock, _)) = listener.accept().await else { continue };
         let client = client.clone();
         let upstream = upstream.clone();
+        let want = format!("GET /stream/{token}");
         tauri::async_runtime::spawn(async move {
             let mut buf = vec![0u8; 8192];
             let Ok(n) = sock.read(&mut buf).await else { return };
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            if !head.starts_with(&want) {
+                let _ = sock
+                    .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+                return;
+            }
             let range = head.lines().find_map(|l| {
                 let (k, v) = l.split_once(':')?;
                 k.eq_ignore_ascii_case("range").then(|| v.trim().to_string())
@@ -662,7 +685,7 @@ async fn serve_proxy(listener: tokio::net::TcpListener, upstream: std::sync::Arc
                 return;
             };
             let mut out = format!(
-                "HTTP/1.1 {} {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n",
+                "HTTP/1.1 {} {}\r\nConnection: close\r\n",
                 resp.status().as_u16(),
                 resp.status().canonical_reason().unwrap_or("")
             );
@@ -731,7 +754,8 @@ async fn stream_url(
                 .await
                 .map_err(|e| e.to_string())?;
             let p = listener.local_addr().map_err(|e| e.to_string())?.port();
-            tauri::async_runtime::spawn(serve_proxy(listener, proxy.upstream.clone()));
+            let token = proxy.token.get_or_init(random_token).clone();
+            tauri::async_runtime::spawn(serve_proxy(listener, proxy.upstream.clone(), token));
             *port = Some(p);
             p
         }
@@ -740,7 +764,8 @@ async fn stream_url(
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
-    Ok(format!("http://127.0.0.1:{p}/stream?{nonce}"))
+    let token = proxy.token.get_or_init(random_token);
+    Ok(format!("http://127.0.0.1:{p}/stream/{token}?{nonce}"))
 }
 
 #[tauri::command]
@@ -818,7 +843,7 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
             .title
             .clone()
             .unwrap_or_else(|| v["title"].as_str().unwrap_or_default().to_string()),
-        duration: v["duration"].as_f64().unwrap_or(0.0),
+        duration: v["duration"].as_f64().or(resolved.duration).unwrap_or(0.0),
         channel: resolved
             .channel
             .clone()
@@ -961,6 +986,18 @@ fn build_dl_args(
 /// 성공 시 저장된 파일 경로를 돌려준다.
 #[tauri::command]
 async fn download(
+    app: AppHandle,
+    jobs: State<'_, Jobs>,
+    hw_cache: State<'_, HwCache>,
+    outputs: State<'_, Outputs>,
+    req: DownloadReq,
+) -> Result<String, String> {
+    let path = download_impl(app, jobs, hw_cache, req).await?;
+    outputs.add(std::slice::from_ref(&path));
+    Ok(path)
+}
+
+async fn download_impl(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     hw_cache: State<'_, HwCache>,
@@ -1348,6 +1385,18 @@ async fn download_plain(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     hw_cache: State<'_, HwCache>,
+    outputs: State<'_, Outputs>,
+    req: PlainReq,
+) -> Result<Vec<String>, String> {
+    let paths = download_plain_impl(app, jobs, hw_cache, req).await?;
+    outputs.add(&paths);
+    Ok(paths)
+}
+
+async fn download_plain_impl(
+    app: AppHandle,
+    jobs: State<'_, Jobs>,
+    hw_cache: State<'_, HwCache>,
     mut req: PlainReq,
 ) -> Result<Vec<String>, String> {
     let dir = req.out_dir.trim_end_matches(['/', '\\']).to_string();
@@ -1360,6 +1409,32 @@ async fn download_plain(
     let out = res.and_then(|ps| ps.iter().map(|p| move_unique(p, &dir)).collect());
     let _ = std::fs::remove_dir_all(&tmp);
     out
+}
+
+/// 이번 실행에서 앱이 받은 파일들. 웹뷰가 임의 경로를 열지 못하도록, 파일은 여기에 있는 것만 연다.
+#[derive(Default)]
+struct Outputs(Mutex<std::collections::HashSet<PathBuf>>);
+
+impl Outputs {
+    fn add(&self, paths: &[String]) {
+        let mut set = self.0.lock().unwrap();
+        for p in paths {
+            if let Ok(c) = std::fs::canonicalize(p) {
+                set.insert(c);
+            }
+        }
+    }
+}
+
+/// 저장 폴더(디렉터리)나 앱이 받은 파일을 기본 프로그램으로 연다.
+#[tauri::command]
+fn open_output(app: AppHandle, outputs: State<'_, Outputs>, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let canon = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+    if !canon.is_dir() && !outputs.0.lock().unwrap().contains(&canon) {
+        return Err("앱이 받은 파일만 열 수 있습니다".into());
+    }
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1375,6 +1450,7 @@ pub fn run() {
         .manage(Jobs::default())
         .manage(HwCache::default())
         .manage(StreamProxy::default())
+        .manage(Outputs::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1386,6 +1462,7 @@ pub fn run() {
             download,
             download_plain,
             cancel,
+            open_output,
             ytdlp_update,
             hw_encoder
         ])

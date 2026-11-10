@@ -4,7 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { downloadDir, homeDir } from '@tauri-apps/api/path';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+  import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
   import Player from '$lib/Player.svelte';
@@ -116,7 +116,7 @@
   async function openFile(path?: string) {
     if (!path) return;
     try {
-      await openPath(path);
+      await invoke('open_output', { path });
     } catch (e) {
       error = `파일을 열 수 없습니다: ${e}`;
     }
@@ -372,7 +372,7 @@
 
   async function openOutDir() {
     try {
-      await openPath(outDir);
+      await invoke('open_output', { path: outDir });
     } catch (e) {
       error = `폴더를 열 수 없습니다 (다운로드한 파일이 없으면 폴더가 없음): ${e}`;
     }

@@ -7,7 +7,6 @@
     "core:default",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
-    { "identifier": "opener:allow-open-path", "allow": [{ "path": "**" }] },
     "dialog:allow-open",
     "updater:default",
     "process:allow-restart"
