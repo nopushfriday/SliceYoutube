@@ -4,6 +4,8 @@ use std::{
     sync::Mutex,
 };
 
+mod live;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::{
@@ -33,6 +35,8 @@ struct VideoInfo {
     aspect: f64,
     /// 유튜브 임베드 플레이어로 재생 가능한지. false면 스트림 재생으로 대체한다
     embeddable: bool,
+    /// 진행 중인 방송(유튜브 라이브). 길이는 방송 시작부터 지금까지이고 지난 구간을 조각으로 받는다
+    live: bool,
     formats: Vec<FormatInfo>,
 }
 
@@ -100,6 +104,9 @@ struct DownloadReq {
     out_dir: String,
     #[serde(skip)]
     resolved: Option<Resolved>,
+    /// 유튜브 라이브의 지난 구간 (start/end는 방송 시작 기준 초)
+    #[serde(default)]
+    live: bool,
 }
 
 /// 다운로드 시작 시 알게 된 영상 정보 (큐 표시용)
@@ -772,7 +779,8 @@ async fn stream_url(
 async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     let resolved = resolve_url(&url).await?;
     let mut args = base_args()?;
-    args.extend(["-J", "--no-playlist", "--playlist-items", "1", "--no-warnings"].map(String::from));
+    // --live-from-start: 라이브면 지난 구간 조각 포맷까지 한 번에 받는다 (라이브가 아니면 영향 없음)
+    args.extend(["-J", "--no-playlist", "--playlist-items", "1", "--no-warnings", "--live-from-start"].map(String::from));
     args.push("--".into());
     args.push(resolved.url.clone());
 
@@ -785,6 +793,10 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
+        // 유튜브 외 사이트의 라이브는 방송 시작부터의 포맷이 없어 여기서 실패한다
+        if err.contains("--live-from-start") {
+            return Err("라이브 방송은 유튜브만 지난 구간을 받을 수 있습니다. (치지직 라이브는 지원하지 않으니 방송 종료 후 다시보기로 이용해 주세요)".into());
+        }
         let line = err
             .lines()
             .rev()
@@ -797,6 +809,18 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
     // 재생목록 주소면 첫 번째 영상만 사용한다
     if let Some(first) = v["entries"].as_array().and_then(|a| a.first()).cloned() {
         v = first;
+    }
+
+    if v["is_live"].as_bool() == Some(true) {
+        if v["extractor_key"].as_str() != Some("Youtube") {
+            return Err(if v["extractor_key"].as_str() == Some("CHZZKLive") {
+                "치지직 라이브는 지원하지 않습니다. 방송이 끝난 뒤 다시보기로 이용해 주세요".into()
+            } else {
+                "이 사이트의 라이브 방송은 지원하지 않습니다".into()
+            });
+        }
+        let embeddable = v["playable_in_embed"].as_bool() != Some(false);
+        return live::live_info(&v, embeddable).await;
     }
 
     // 제공되는 (코덱, 높이) 조합 수집
@@ -838,6 +862,7 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
         aspect,
         embeddable: v["extractor_key"].as_str() == Some("Youtube")
             && v["playable_in_embed"].as_bool() != Some(false),
+        live: false,
         id: v["id"].as_str().unwrap_or_default().to_string(),
         title: resolved
             .title
@@ -920,7 +945,7 @@ fn build_dl_args(
     let resolved = req.resolved.as_ref().ok_or("주소를 해석하지 못했습니다")?;
     let mut args = base_args()?;
     args.extend(
-        ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime"]
+        ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime", "--match-filters", "!is_live"]
             .map(String::from),
     );
     args.push("--download-sections".into());
@@ -1023,6 +1048,9 @@ async fn download_impl(
             .formats
             .iter()
             .any(|f| f.codec == want && (cap == 0 || f.height <= cap));
+    if req.live {
+        return live::download_live(&app, &jobs, &hw_cache, &req, vf, native).await;
+    }
     let reencode = !native;
 
     std::fs::create_dir_all(&req.out_dir).map_err(|e| e.to_string())?;
@@ -1228,7 +1256,8 @@ async fn plain_inner(
     };
 
     let mut args = base_args()?;
-    args.extend(["--newline", "--windows-filenames", "--no-mtime"].map(String::from));
+    // 생방송은 끝나지 않으므로 받지 않는다 (지난 구간 자르기는 구간 지정 탭에서)
+    args.extend(["--newline", "--windows-filenames", "--no-mtime", "--match-filters", "!is_live"].map(String::from));
     if req.playlist {
         args.push("--yes-playlist".into());
     } else {
@@ -1291,7 +1320,11 @@ async fn plain_inner(
     r.files = files;
     r.metas = metas;
     if r.files.is_empty() {
-        return Ok(vec![]);
+        return if req.playlist {
+            Ok(vec![])
+        } else {
+            Err("받을 수 있는 영상이 없습니다. 생방송이라면 방송이 끝난 뒤에 받아 주세요 (유튜브 라이브의 지난 구간은 '자르기' 탭에서 받을 수 있습니다)".into())
+        };
     }
     if req.audio_only {
         return Ok(r.files);
@@ -1438,9 +1471,15 @@ fn open_output(app: AppHandle, outputs: State<'_, Outputs>, path: String) -> Res
 }
 
 #[tauri::command]
-fn cancel(jobs: State<'_, Jobs>, job: u32) {
-    if let Some(child) = jobs.0.lock().unwrap().remove(&job) {
-        let _ = child.kill();
+fn cancel(jobs: State<'_, Jobs>, live: State<'_, live::LiveCancel>, job: u32) {
+    match jobs.0.lock().unwrap().remove(&job) {
+        Some(child) => {
+            let _ = child.kill();
+        }
+        // 실행 중인 프로세스가 없으면 라이브 조각을 받는 중일 수 있다
+        None => {
+            live.0.lock().unwrap().insert(job);
+        }
     }
 }
 
@@ -1451,6 +1490,7 @@ pub fn run() {
         .manage(HwCache::default())
         .manage(StreamProxy::default())
         .manage(Outputs::default())
+        .manage(live::LiveCancel::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())

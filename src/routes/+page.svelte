@@ -15,7 +15,7 @@
   import { clamp, fmt } from '$lib/util';
 
   type Fmt = { codec: 'h264' | 'vp9' | 'av1'; height: number };
-  type Info = { id: string; title: string; duration: number; channel: string; aspect: number; embeddable: boolean; formats: Fmt[] };
+  type Info = { id: string; title: string; duration: number; channel: string; aspect: number; embeddable: boolean; live: boolean; formats: Fmt[] };
   type Codec = 'h264' | 'vp9' | 'av1';
   const CODEC_LABEL: Record<string, string> = { h264: 'H.264', vp9: 'VP9', av1: 'AV1' };
   type Seg = {
@@ -25,6 +25,7 @@
     start: number;
     end: number;
     formats: Fmt[];
+    live: boolean;
     status: 'pending' | 'running' | 'done' | 'error' | 'cancelled';
     phase: 'download' | 'encode';
     percent: number;
@@ -347,7 +348,8 @@
       info = await invoke<Info>('fetch_info', { url: u });
       sourceUrl = u;
       start = end = null;
-      now = 0;
+      // 라이브는 재생 시간이 방송 시작 기준이라 지금 위치(끝)에서 시작한다
+      now = info.live ? info.duration : 0;
       crop = { ...NO_CROP };
       cropEditing = false;
       embedBlocked = !info.embeddable;
@@ -384,6 +386,8 @@
   }
 
   function onTime(t: number) {
+    // 라이브는 재생을 시작하기 전까지 플레이어가 0을 알려 준다. 그동안은 지금 위치(끝)를 유지한다
+    if (info?.live && t < 1) return;
     now = t;
     if (end != null && start != null && playing) {
       if (loop && t >= end) player.seek(start);
@@ -428,6 +432,7 @@
       start,
       end,
       formats: info.formats,
+      live: info.live,
       status: 'pending',
       phase: 'download',
       percent: 0
@@ -467,6 +472,7 @@
             hwAccel,
             crop: $state.snapshot(crop),
             formats: s.formats,
+            live: s.live,
             outDir
           }
         });
@@ -597,7 +603,7 @@
           <h2>영상 불러오는 중<span class="dots"></span></h2>
         </div>
       {:else if info}
-        <h2 title={info.title}>{info.title}</h2>
+        <h2 title={info.title}>{#if info.live}<span class="live" title="진행 중인 방송: 지난 구간만 받을 수 있습니다">LIVE</span> {/if}{info.title}</h2>
         <div class="stagebox">
           {#if embedBlocked}
             <StreamPlayer bind:this={player} url={sourceUrl} ontime={onTime} onstate={(p) => (playing = p)} />
@@ -1294,6 +1300,18 @@
     75% {
       content: '...';
     }
+  }
+  .live {
+    display: inline-block;
+    padding: 1px 7px;
+    margin-right: 4px;
+    border-radius: 4px;
+    background: #e5484d;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    vertical-align: 2px;
   }
   .big {
     font-size: 34px;
