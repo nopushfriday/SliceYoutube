@@ -33,14 +33,14 @@
   };
 
   const SHORTCUTS: [string, string][] = [
-    ['Q', '시작 지점 지정'],
-    ['W', '끝 지점 지정'],
-    ['Enter', '클립을 큐에 추가 (숫자패드 Enter 포함)'],
+    ['Q', '시작 지점'],
+    ['W', '종료 지점'],
+    ['Enter', '클립 추가'],
     ['Space', '재생 / 일시정지'],
     ['← →', '5초 이동 (Shift: 1초)'],
     [', .', '1프레임 이동'],
-    ['\\', '구간 반복 켜기/끄기'],
-    ['?', '이 도움말']
+    ['\\', '구간 반복'],
+    ['?', '단축키 도움말']
   ];
 
   // 앱 업데이트: 새 버전이 있으면 받아서 교체한 뒤 다시 시작한다
@@ -352,7 +352,7 @@
     try {
       url = (await navigator.clipboard.readText()).trim();
     } catch {
-      error = '클립보드를 읽을 수 없습니다. 주소를 직접 붙여넣어 주세요.';
+      error = '클립보드를 읽을 수 없습니다. 직접 붙여넣어 주세요.';
       return;
     }
     if (url) load();
@@ -362,7 +362,7 @@
     try {
       await openPath(outDir);
     } catch (e) {
-      error = `폴더를 열 수 없습니다 (아직 다운로드한 파일이 없으면 폴더가 없을 수 있습니다): ${e}`;
+      error = `폴더를 열 수 없습니다 (다운로드한 파일이 없으면 폴더가 없음): ${e}`;
     }
   }
 
@@ -542,7 +542,7 @@
     <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> 다운로드</button>
     <span class="grow"></span>
     {#if upd}
-      <button class="upd" onclick={installUpdate} disabled={updBusy || running || dlRunning} title="작업이 끝난 뒤 업데이트할 수 있습니다">
+      <button class="upd" onclick={installUpdate} disabled={updBusy || running || dlRunning} title="작업 종료 후 업데이트 가능">
         <i class="ti {updBusy ? 'ti-loader-2 spin' : 'ti-arrow-up-circle'}"></i>
         {updBusy ? `업데이트 중 ${updPct}%` : `v${upd.version} 업데이트`}
       </button>
@@ -601,7 +601,7 @@
           </button>
           <b>{fmt(now, 2)}</b> / {fmt(info.duration, 0)}
           <span class="grow"></span>
-          <button class="crop-btn" class:on={cropEditing} onclick={() => (cropEditing = !cropEditing)} title="영상 위에서 드래그해 잘라낼 범위를 지정합니다">
+          <button class="crop-btn" class:on={cropEditing} onclick={() => (cropEditing = !cropEditing)} title="영상 위 드래그로 화면 자르기">
             <i class="ti ti-crop"></i> 자르기{cropped ? ' ●' : ''}
           </button>
           <label class="loop"><input type="checkbox" bind:checked={loop} /> 구간 반복 <kbd>\</kbd></label>
@@ -646,9 +646,9 @@
         <div class="empty-main">
           <i class="ti ti-scissors big"></i>
           <h2>필요한 구간만 다운로드</h2>
-          <p>
-            영상을 불러온 뒤 재생하면서 <kbd>Q</kbd>로 시작, <kbd>W</kbd>로 끝 지점을 찍으세요.
-            지정한 구간만 받아서 용량과 시간을 아낍니다.
+          <p class="keys">
+            <span><kbd>Q</kbd> 시작 지점</span>
+            <span><kbd>W</kbd> 종료 지점</span>
           </p>
           <button class="primary" onclick={pasteAndLoad}>
             <i class="ti ti-clipboard"></i> 클립보드의 주소 불러오기
@@ -706,10 +706,10 @@
                   <span><ScrubNumber value={crop[side]} onchange={(v) => setCrop(side, v)} /></span>
                 </div>
               {/each}
-              <p class="note">영상 위 '자르기' 버튼으로 드래그하거나, 숫자를 좌우로 끌어 조절(클릭하면 직접 입력)하세요. </p>
+              <p class="note">영상 위 드래그 또는 숫자로 조절</p>
             </div>
             {#if codec === 'h264'}
-              <label class="check" title="H.264로 인코딩할 때 GPU를 사용합니다. 지원하지 않거나 실패하면 CPU로 자동 전환됩니다.">
+              <label class="check" title="GPU로 인코딩 (실패 시 CPU)">
                 <input type="checkbox" bind:checked={hwAccel} disabled={hwEnc === null} /> 하드웨어 인코딩 (H.264)
               </label>
             {/if}
@@ -749,7 +749,7 @@
         {:else}
           <li class="empty">
             <i class="ti ti-playlist-add big"></i>
-            <div>구간을 지정하고 <kbd>Enter</kbd>로 추가하세요</div>
+            <div>구간 지정 후 <kbd>Enter</kbd>로 추가</div>
           </li>
         {/each}
       </ul>
@@ -762,7 +762,7 @@
         </button>
       {/if}
       <div class="folder">
-        <button class="path" onclick={pickDir} title="클릭해서 저장 폴더 변경: {outDir}">
+        <button class="path" onclick={pickDir} title="저장 폴더 변경: {outDir}">
           <i class="ti ti-folder"></i><span>{outDir}</span>
         </button>
         <button class="mini" onclick={openOutDir} title="저장 폴더 열기" aria-label="저장 폴더 열기">
@@ -778,7 +778,7 @@
       <i class="ti ti-link icon"></i>
       <input
         class="url"
-        placeholder="주소를 붙여넣고 Enter — 큐에 바로 추가"
+        placeholder="주소를 붙여넣고 Enter"
         bind:value={dlUrl}
         onkeydown={(e) => e.key === 'Enter' && addDownload()}
       />
@@ -790,32 +790,32 @@
         <div class="opts dlopts">
           <h3>다운로드 옵션</h3>
           <label class="check"><input type="checkbox" bind:checked={dlAuto} /> 큐에 추가하면 바로 다운로드</label>
-          <label title="재생목록 주소일 때 첫 번째 영상만 받을지, 전체를 받을지 정합니다.">재생목록
+          <label title="재생목록 주소의 다운로드 범위">재생목록
             <select bind:value={dlPlaylist}>
               <option value={false}>첫 번째 영상만</option>
               <option value={true}>전체 다운로드</option>
             </select>
           </label>
           <label class="check"><input type="checkbox" bind:checked={dlAudioOnly} /> 오디오만</label>
-          <label title="오디오가 AAC/MP3가 아니면(opus 등) 선택한 형식으로 변환합니다.">오디오 형식
+          <label title="AAC/MP3가 아닌 오디오는 선택한 형식으로 변환">오디오 형식
             <select bind:value={dlAudio}>
               <option value="aac">AAC</option>
               <option value="mp3">MP3</option>
             </select>
           </label>
-          <label title="오디오를 인코딩할 때의 비트레이트입니다. 이미 선택한 형식이면 다시 인코딩하지 않는 영상 파일에는 적용되지 않습니다.">오디오 비트레이트
+          <label title="오디오 인코딩 비트레이트 (재인코딩하지 않으면 적용 안 됨)">오디오 비트레이트
             <select bind:value={dlKbps}>
               {#each [128, 192, 256, 320] as k}<option value={k}>{k} kbps</option>{/each}
             </select>
           </label>
           {#if !dlAudioOnly}
-            <label title="합치기: 최고 화질 영상과 오디오를 따로 받아 mp4로 합칩니다. 원본: 합쳐지지 않은 단일 파일을 그대로 받습니다.">다운로드 방식
+            <label title="합치기: 영상·오디오를 따로 받아 mp4로 병합 · 원본: 단일 파일 그대로">다운로드 방식
               <select bind:value={dlMode}>
                 <option value="merge">영상+오디오 합치기 (최고 화질)</option>
                 <option value="original">원본 (합치지 않은 단일 파일)</option>
               </select>
             </label>
-            <label title="선택한 코덱을 영상이 제공하면 그대로 받고, 없으면 받은 뒤 그 코덱으로 자동 인코딩합니다. 원본 유지는 VP9·AV1·H.264 외 코덱만 H.264로 변환합니다.">영상 코덱
+            <label title="해당 코덱이 없으면 받은 뒤 인코딩 · 원본 유지: VP9·AV1·H.264 외에만 H.264로 변환">영상 코덱
               <select bind:value={dlCodec}>
                 <option value="h264">H.264 (호환성 최고)</option>
                 <option value="vp9">VP9</option>
@@ -887,7 +887,7 @@
           </button>
         {/if}
         <div class="folder">
-          <button class="path" onclick={pickDir} title="클릭해서 저장 폴더 변경: {outDir}">
+          <button class="path" onclick={pickDir} title="저장 폴더 변경: {outDir}">
             <i class="ti ti-folder"></i><span>{outDir}</span>
           </button>
           <button class="mini" onclick={openOutDir} title="저장 폴더 열기" aria-label="저장 폴더 열기">
@@ -910,7 +910,7 @@
             {/each}
           </tbody>
         </table>
-        <p class="note">타임라인: 휠로 확대/축소, 핸들을 끌면 영상이 따라가고 Shift+드래그는 미세 조절입니다.</p>
+        <p class="note">타임라인 — 휠: 확대/축소 · 핸들 드래그: 구간 조절 · Shift+드래그: 미세 조절</p>
         <button onclick={() => (showHelp = false)}>닫기 <kbd>Esc</kbd></button>
       </div>
     </div>
@@ -1224,6 +1224,10 @@
   }
   .empty-main p {
     margin: 0 0 6px;
+  }
+  .empty-main .keys {
+    display: flex;
+    gap: 16px;
   }
   .big {
     font-size: 34px;

@@ -54,7 +54,7 @@
 {:else}
   <span
     class="num"
-    title="좌우로 드래그해 조절 (Shift: 미세) · 클릭해 직접 입력"
+    title="드래그: 조절 (Shift: 미세) · 클릭: 직접 입력"
     onpointerdown={down}
     onpointermove={move}
     onpointerup={up}
