@@ -153,6 +153,11 @@ fn template_literal(s: &str) -> String {
     clean.replace('%', "%%")
 }
 
+/// 줄바꿈이 섞이면 sidecar 출력의 `CUTDLP_FILE ` 같은 표식 줄을 위조할 수 있으므로 한 줄로 만든다.
+fn one_line(s: &str) -> String {
+    s.split(['\r', '\n']).map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
 const CHZZK_API: &str = "https://api.chzzk.naver.com/service/v1";
 
 /// 치지직 쇼츠/클립 주소(chzzk.naver.com/shorts/ID, /clips/ID)에서 ID를 꺼낸다.
@@ -199,11 +204,11 @@ async fn resolve_url(url: &str) -> Result<Resolved, String> {
     let thumbnail = chzzk_get(&client, &format!("clips/{id}/detail"))
         .await
         .ok()
-        .and_then(|d| d["thumbnailImageUrl"].as_str().map(String::from));
+        .and_then(|d| d["thumbnailImageUrl"].as_str().map(one_line));
     Ok(Resolved {
         url: format!("https://apis.naver.com/neonplayer/vodplay/v2/playback/{video_id}?key={key}"),
-        title: play["contentTitle"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-        channel: play["ownerChannel"]["channelName"].as_str().map(String::from),
+        title: play["contentTitle"].as_str().map(one_line).filter(|s| !s.is_empty()),
+        channel: play["ownerChannel"]["channelName"].as_str().map(one_line),
         thumbnail,
     })
 }
