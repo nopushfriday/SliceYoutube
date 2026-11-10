@@ -210,7 +210,6 @@
   let hwAccel = $state(true);
   const NO_CROP: Crop = { left: 0, right: 0, top: 0, bottom: 0 };
   let crop = $state<Crop>({ ...NO_CROP });
-  let cropEditing = $state(false);
   // 임베드가 막힌 영상은 스트림 재생으로 대체
   let embedBlocked = $state(false);
   const cropped = $derived(crop.left + crop.right + crop.top + crop.bottom > 0);
@@ -345,11 +344,12 @@
     error = '';
     try {
       info = await invoke<Info>('fetch_info', { url: u });
+      // 다른 영상이면 이전 영상의 받아 둔 구간을 비운다
+      if (u !== sourceUrl) invoke('clear_section_cache').catch(() => {});
       sourceUrl = u;
       start = end = null;
       now = 0;
       crop = { ...NO_CROP };
-      cropEditing = false;
       embedBlocked = !info.embeddable;
       playing = false;
     } catch (e) {
@@ -442,13 +442,33 @@
     player.play();
   }
 
+  const waiting = (s: Seg) => s.status === 'pending' || s.status === 'error' || s.status === 'cancelled';
+
+  // 같은 영상에서 서로 겹치는 대기 클립들의 합친 범위. 첫 클립이 이 범위를 한 번에 받고 나머지는 그 안에서 자른다.
+  function overlapRange(s: Seg): { fetchStart: number; fetchEnd: number } {
+    const same = segs.filter((x) => x.url === s.url && waiting(x)).sort((a, b) => a.start - b.start);
+    let lo = s.start;
+    let hi = s.end;
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const x of same) {
+        if (x.start <= hi && x.end >= lo && (x.start < lo || x.end > hi)) {
+          lo = Math.min(lo, x.start);
+          hi = Math.max(hi, x.end);
+          grew = true;
+        }
+      }
+    }
+    return { fetchStart: lo, fetchEnd: hi };
+  }
+
   async function runQueue() {
     if (running) return;
     running = true;
     stopQueue = false;
     for (const s of segs) {
       if (stopQueue) break;
-      if (s.status !== 'pending' && s.status !== 'error' && s.status !== 'cancelled') continue;
+      if (!waiting(s)) continue;
       s.status = 'running';
       s.phase = 'download';
       s.percent = 0;
@@ -467,7 +487,8 @@
             hwAccel,
             crop: $state.snapshot(crop),
             formats: s.formats,
-            outDir
+            outDir,
+            ...overlapRange(s)
           }
         });
         s.status = 'done';
@@ -610,7 +631,7 @@
               onerror={() => (embedBlocked = true)}
             />
           {/if}
-          <CropOverlay bind:crop aspect={info.aspect} editing={cropEditing} />
+          <CropOverlay bind:crop aspect={info.aspect} ontap={() => player.toggle()} />
         </div>
         <div class="time">
           <button class="icon-btn" onclick={() => player.toggle()} aria-label="재생/일시정지">
@@ -618,9 +639,6 @@
           </button>
           <b>{fmt(now, 2)}</b> / {fmt(info.duration, 0)}
           <span class="grow"></span>
-          <button class="crop-btn" class:on={cropEditing} onclick={() => (cropEditing = !cropEditing)} title="영상 위 드래그로 화면 자르기">
-            <i class="ti ti-crop"></i> 자르기{cropped ? ' ●' : ''}
-          </button>
           <label class="loop"><input type="checkbox" bind:checked={loop} /> 구간 반복 <kbd>\</kbd></label>
         </div>
 
@@ -1346,10 +1364,6 @@
   }
   .stagebox {
     position: relative;
-  }
-  .crop-btn.on {
-    background: var(--accent, #2563eb);
-    color: #fff;
   }
   .crop {
     display: flex;

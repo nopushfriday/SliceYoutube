@@ -4,8 +4,8 @@
   let {
     crop = $bindable(),
     aspect,
-    editing
-  }: { crop: Crop; aspect: number; editing: boolean } = $props();
+    ontap
+  }: { crop: Crop; aspect: number; ontap?: () => void } = $props();
 
   // 플레이어 영역은 16:9이고 영상은 그 안에 비율대로 맞춰지므로(레터박스) 실제 영상 영역만 계산한다.
   const BOX = 16 / 9;
@@ -20,7 +20,7 @@
 
   type Mode = 'l' | 'r' | 't' | 'b' | 'tl' | 'tr' | 'bl' | 'br' | 'move';
   let el = $state<HTMLDivElement>();
-  let drag: { mode: Mode; x: number; y: number; start: Crop } | null = null;
+  let drag: { mode: Mode; x: number; y: number; start: Crop; moved: boolean } | null = null;
 
   const round = (v: number) => Math.round(v * 10) / 10;
 
@@ -28,11 +28,12 @@
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag = { mode, x: e.clientX, y: e.clientY, start: { ...crop } };
+    drag = { mode, x: e.clientX, y: e.clientY, start: { ...crop }, moved: false };
   }
 
   function move(e: PointerEvent) {
     if (!drag || !el) return;
+    if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
     const r = el.getBoundingClientRect();
     const dx = ((e.clientX - drag.x) / r.width) * 100;
     const dy = ((e.clientY - drag.y) / r.height) * 100;
@@ -56,41 +57,41 @@
   }
 
   function up() {
+    // 자르기 영역 안을 움직이지 않고 클릭하면 영상 클릭(재생/일시정지)으로 전달한다
+    if (drag?.mode === 'move' && !drag.moved) ontap?.();
     drag = null;
   }
 
   const HANDLES: Mode[] = ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l'];
 </script>
 
-{#if active || editing}
-  <div class="stage" class:editing>
+<div class="stage">
+  <div
+    class="frame"
+    bind:this={el}
+    style="width:{frame.w}%;height:{frame.h}%"
+    onpointermove={move}
+    onpointerup={up}
+    onpointercancel={up}
+    role="presentation"
+  >
+    <div class="dim" style="left:0;top:0;right:0;height:{crop.top}%"></div>
+    <div class="dim" style="left:0;bottom:0;right:0;height:{crop.bottom}%"></div>
+    <div class="dim" style="left:0;top:{crop.top}%;bottom:{crop.bottom}%;width:{crop.left}%"></div>
+    <div class="dim" style="right:0;top:{crop.top}%;bottom:{crop.bottom}%;width:{crop.right}%"></div>
     <div
-      class="frame"
-      bind:this={el}
-      style="width:{frame.w}%;height:{frame.h}%"
-      onpointermove={move}
-      onpointerup={up}
-      onpointercancel={up}
-      role="presentation"
+      class="box"
+      style="left:{crop.left}%;right:{crop.right}%;top:{crop.top}%;bottom:{crop.bottom}%"
     >
-      <div class="dim" style="left:0;top:0;right:0;height:{crop.top}%"></div>
-      <div class="dim" style="left:0;bottom:0;right:0;height:{crop.bottom}%"></div>
-      <div class="dim" style="left:0;top:{crop.top}%;bottom:{crop.bottom}%;width:{crop.left}%"></div>
-      <div class="dim" style="right:0;top:{crop.top}%;bottom:{crop.bottom}%;width:{crop.right}%"></div>
-      <div
-        class="box"
-        style="left:{crop.left}%;right:{crop.right}%;top:{crop.top}%;bottom:{crop.bottom}%"
-      >
-        {#if editing}
-          <div class="body" onpointerdown={(e) => down(e, 'move')} role="presentation"></div>
-          {#each HANDLES as h}
-            <div class="h {h}" onpointerdown={(e) => down(e, h)} role="presentation"></div>
-          {/each}
-        {/if}
-      </div>
+      {#if active}
+        <div class="body" onpointerdown={(e) => down(e, 'move')} role="presentation"></div>
+      {/if}
+      {#each HANDLES as h}
+        <div class="h {h}" onpointerdown={(e) => down(e, h)} role="presentation"></div>
+      {/each}
     </div>
   </div>
-{/if}
+</div>
 
 <style>
   .stage {
@@ -100,9 +101,6 @@
     align-items: center;
     justify-content: center;
     pointer-events: none;
-  }
-  .stage.editing {
-    pointer-events: auto;
   }
   .frame {
     position: relative;
@@ -116,7 +114,7 @@
     outline: 1.5px solid #fff;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   }
-  .editing .box {
+  .box {
     /* 3분할 가이드 */
     background-image:
       linear-gradient(to right, transparent 33.2%, rgba(255, 255, 255, 0.35) 33.3%, transparent 33.5%, transparent 66.5%, rgba(255, 255, 255, 0.35) 66.6%, transparent 66.8%),
@@ -126,8 +124,10 @@
     position: absolute;
     inset: 0;
     cursor: move;
+    pointer-events: auto;
   }
   .h {
+    pointer-events: auto;
     position: absolute;
     width: 14px;
     height: 14px;
