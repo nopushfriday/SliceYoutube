@@ -803,7 +803,8 @@ fn build_dl_args(
             Some(c) => {
                 let p = codec_prefix(c);
                 format!(
-                    "bv*[vcodec^={p}]{hf}[protocol=https]+ba[protocol=https]/bv*[vcodec^={p}]{hf}+ba"
+                    "bv*[vcodec^={p}]{hf}[protocol=https]+ba[protocol=https]/bv*[vcodec^={p}]{hf}+ba\
+                     /b[vcodec^={p}]{hf}[protocol=https]/b[vcodec^={p}]{hf}"
                 )
             }
             // 포맷 정보가 없는 사이트
