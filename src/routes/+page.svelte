@@ -256,6 +256,10 @@
   let showSettings = $state(false);
   let showHelp = $state(false);
 
+  // 색만으로 구분하지 않도록 상태는 아이콘과 글자를 함께 보여준다
+  const STATUS_ICON: Record<string, string> = { pending: 'ti-clock', done: 'ti-check', cancelled: 'ti-ban' };
+  const STATUS_LABEL: Record<string, string> = { pending: '대기', done: '완료', cancelled: '취소됨' };
+
   // yt-dlp 자동 업데이트 상태
   type Yt = { version: string | null; updated: boolean; error: string | null };
   let ytBusy = $state(true);
@@ -599,8 +603,11 @@
 
 <main>
   <nav class="tabs">
-    <button class:on={tab === 'slice'} onclick={() => (tab = 'slice')}><i class="ti ti-scissors"></i> 자르기</button>
-    <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> 다운로드</button>
+    <span class="brand"><i class="ti ti-scissors"></i> slice-youtube</span>
+    <div class="seg">
+      <button class:on={tab === 'slice'} onclick={() => (tab = 'slice')}><i class="ti ti-scissors"></i> 자르기</button>
+      <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> 다운로드</button>
+    </div>
     <span class="grow"></span>
     {#if upd}
       <button class="upd" onclick={installUpdate} disabled={updBusy || running || dlRunning} title="작업 종료 후 업데이트 가능">
@@ -613,6 +620,19 @@
         {updChecking ? '확인 중…' : updMsg || '업데이트 확인'}
       </button>
     {/if}
+    <button
+      class="yt"
+      class:bad={!!yt.error}
+      onclick={() => updateYtdlp(true)}
+      disabled={ytBusy || running}
+      title={yt.error ? `${yt.error}\n눌러서 다시 확인` : '눌러서 yt-dlp 업데이트 확인'}
+    >
+      <i class="ti {ytBusy ? 'ti-loader-2 spin' : yt.error ? 'ti-alert-triangle' : 'ti-circle-check'}"></i>
+      {#if ytBusy}yt-dlp 확인 중…{:else if yt.error}yt-dlp {yt.version ?? ''} · 확인 실패{:else}yt-dlp {yt.version}{yt.updated ? ' (업데이트됨)' : ''}{/if}
+    </button>
+    <button class="icon-btn" onclick={() => (showHelp = true)} title="단축키 (?)" aria-label="단축키">
+      <i class="ti ti-keyboard"></i>
+    </button>
   </nav>
 
   <!-- 탭을 바꿔도 플레이어와 지정한 구간이 유지되도록 숨기기만 한다 -->
@@ -627,19 +647,6 @@
     />
     {#if info}<span class="meta">{info.channel} · {fmt(info.duration, 0)}</span>{/if}
     <button class="primary" onclick={load} disabled={loading || ytBusy || !url.trim()}>{loading ? '불러오는 중…' : '불러오기'}</button>
-    <button
-      class="yt"
-      class:bad={!!yt.error}
-      onclick={() => updateYtdlp(true)}
-      disabled={ytBusy || running}
-      title={yt.error ? `${yt.error}\n눌러서 다시 확인` : '눌러서 yt-dlp 업데이트 확인'}
-    >
-      <i class="ti {ytBusy ? 'ti-loader-2 spin' : yt.error ? 'ti-alert-triangle' : 'ti-circle-check'}"></i>
-      {#if ytBusy}yt-dlp 확인 중…{:else if yt.error}yt-dlp {yt.version ?? ''} · 확인 실패{:else}yt-dlp {yt.version}{yt.updated ? ' (업데이트됨)' : ''}{/if}
-    </button>
-    <button class="icon-btn" onclick={() => (showHelp = true)} title="단축키 (?)" aria-label="단축키">
-      <i class="ti ti-keyboard"></i>
-    </button>
   </header>
   {#if error}<p class="err">{error}</p>{/if}
 
@@ -727,18 +734,21 @@
 
     <aside>
       <div class="ahead">
-        <h3>클립 ({segs.length})</h3>
+        <h3>클립</h3>
+        <span class="chip">{segs.length}</span>
+        <span class="grow"></span>
+        <button class="sm" onclick={() => (showSettings = !showSettings)} aria-expanded={showSettings}>
+          <i class="ti ti-adjustments"></i> 설정 <i class="ti {showSettings ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+        </button>
       </div>
-
-      <button class="summary" onclick={() => (showSettings = !showSettings)} aria-expanded={showSettings}>
-        <i class="ti ti-adjustments"></i>
-        <span class="grow">{summary}</span>
-        <i class="ti {showSettings ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
-      </button>
+      <div class="sumline">{summary}</div>
 
       {#if showSettings}
         <div class="opts">
-          <label class="check"><input type="checkbox" bind:checked={audioOnly} /> 오디오만 (mp3)</label>
+          <div class="seg" role="group" aria-label="받을 형식">
+            <button class:on={!audioOnly} onclick={() => (audioOnly = false)}>영상</button>
+            <button class:on={audioOnly} onclick={() => (audioOnly = true)}>오디오만 (mp3)</button>
+          </div>
           {#if !audioOnly}
             <label>코덱
               <select bind:value={codec}>
@@ -792,27 +802,33 @@
               <span class="t">{fmt(s.start, 1)} – {fmt(s.end, 1)}</span>
               <span class="len">{fmt(s.end - s.start, 1)}초</span>
               <span class="grow"></span>
+              {#if s.status === 'running'}
+                <span class="chip run"><i class="ti ti-download"></i>{s.phase === 'encode' ? '인코딩 중' : '다운로드 중'} {Math.round(s.percent)}%</span>
+              {:else if s.status === 'error'}
+                <span class="chip error"><i class="ti ti-alert-triangle"></i>실패</span>
+              {:else}
+                <span class="chip {s.status}"><i class="ti {STATUS_ICON[s.status]}"></i>{STATUS_LABEL[s.status]}</span>
+              {/if}
+            </div>
+            <div class="name" title={s.title}>{s.title}</div>
+            {#if s.status === 'running'}
+              <progress max="100" value={s.percent}></progress>
+            {:else if s.status === 'error'}
+              <div class="err">{s.error}</div>
+            {/if}
+            <div class="acts">
               <button class="mini" onclick={() => navigator.clipboard.writeText(s.url)} title="주소 복사" aria-label="주소 복사">
-                  <i class="ti ti-copy"></i>
-                </button>
-                {#if s.status === 'done' && s.file}
+                <i class="ti ti-copy"></i>
+              </button>
+              {#if s.status === 'done' && s.file}
                 <button class="mini" onclick={() => revealItemInDir(s.file!)} title="폴더에서 보기" aria-label="폴더에서 보기">
-                    <i class="ti ti-folder"></i>
-                  </button>
+                  <i class="ti ti-folder"></i>
+                </button>
               {/if}
               <button class="mini" onclick={() => remove(s.id)} title="삭제" aria-label="삭제">
                 <i class="ti ti-x"></i>
               </button>
             </div>
-            <div class="name" title={s.title}>{s.title}</div>
-            {#if s.status === 'running'}
-              <div class="st run">{s.phase === 'encode' ? '인코딩 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
-              <progress max="100" value={s.percent}></progress>
-            {:else if s.status === 'error'}
-              <div class="err">{s.error}</div>
-            {:else}
-              <div class="st {s.status}">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}</div>
-            {/if}
           </li>
         {:else}
           <li class="empty">
@@ -856,15 +872,22 @@
     <div class="cols">
       <section class="left">
         <div class="opts dlopts">
-          <h3>다운로드 옵션</h3>
-          <label class="check"><input type="checkbox" bind:checked={dlAuto} /> 큐에 추가하면 바로 다운로드</label>
+          <div class="dlhead">
+            <h3>다운로드 옵션</h3>
+            <span class="grow"></span>
+            <label class="check"><input type="checkbox" bind:checked={dlAuto} /> 큐에 추가하면 바로 다운로드</label>
+          </div>
+          <div class="seg seg-fit" role="group" aria-label="받을 형식">
+            <button class:on={!dlAudioOnly} onclick={() => (dlAudioOnly = false)}>영상</button>
+            <button class:on={dlAudioOnly} onclick={() => (dlAudioOnly = true)}>오디오만</button>
+          </div>
+          <div class="grid2">
           <label title="재생목록 주소의 다운로드 범위">재생목록
             <select bind:value={dlPlaylist}>
               <option value={false}>첫 번째 영상만</option>
               <option value={true}>전체 다운로드</option>
             </select>
           </label>
-          <label class="check"><input type="checkbox" bind:checked={dlAudioOnly} /> 오디오만</label>
           <label title="AAC/MP3가 아닌 오디오는 선택한 형식으로 변환">오디오 형식
             <select bind:value={dlAudio}>
               <option value="aac">AAC</option>
@@ -898,11 +921,12 @@
               </select>
             </label>
           {/if}
+          </div>
         </div>
       </section>
 
       <aside>
-        <div class="ahead"><h3>목록 ({dlItems.length})</h3></div>
+        <div class="ahead"><h3>목록</h3><span class="chip">{dlItems.length}</span></div>
         <ul>
           {#each dlItems as s (s.id)}
             <li class={s.status}>
@@ -911,7 +935,17 @@
                   {#if s.thumb}<img src={s.thumb} alt="" />{:else}<i class="ti ti-video"></i>{/if}
                 </button>
                 <div class="body">
+                  <button class="name namebtn" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title={s.file ? shortPath(s.file) : (s.title ?? s.url)}>
+                    {s.file ? baseName(s.file) : (s.title ?? s.url)}
+                  </button>
                   <div class="row">
+                    {#if s.status === 'running'}
+                      <span class="chip run"><i class="ti ti-download"></i>{s.phase === 'encode' ? '변환 중' : '다운로드 중'} {Math.round(s.percent)}%</span>
+                    {:else if s.status === 'error'}
+                      <span class="chip error"><i class="ti ti-alert-triangle"></i>실패</span>
+                    {:else}
+                      <span class="chip {s.status}"><i class="ti {STATUS_ICON[s.status]}"></i>{STATUS_LABEL[s.status]}{s.status === 'done' && (s.count ?? 0) > 1 ? ` · ${s.count}개` : ''}</span>
+                    {/if}
                     <span class="grow"></span>
                     <button class="mini" onclick={() => navigator.clipboard.writeText(s.url)} title="주소 복사" aria-label="주소 복사">
                       <i class="ti ti-copy"></i>
@@ -925,16 +959,10 @@
                       <i class="ti ti-x"></i>
                     </button>
                   </div>
-                  <button class="name namebtn" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title={s.file ? shortPath(s.file) : (s.title ?? s.url)}>
-                    {s.file ? baseName(s.file) : (s.title ?? s.url)}
-                  </button>
                   {#if s.status === 'running'}
-                    <div class="st run">{s.phase === 'encode' ? '변환 중' : '다운로드 중'} {Math.round(s.percent)}%</div>
                     <progress max="100" value={s.percent}></progress>
                   {:else if s.status === 'error'}
                     <div class="err">{s.error}</div>
-                  {:else}
-                    <div class="st {s.status}">{{ pending: '대기', done: '완료', cancelled: '취소됨' }[s.status]}{s.status === 'done' && (s.count ?? 0) > 1 ? ` · ${s.count}개` : ''}</div>
                   {/if}
                 </div>
               </div>
@@ -1020,23 +1048,97 @@
   }
   .tabs {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 8px;
     flex-shrink: 0;
   }
-  .tabs button {
-    padding: 4px 12px;
-    font-size: 13px;
+  .tabs .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 8px;
+    font-weight: 700;
+    font-size: 15px;
+  }
+  .tabs .brand i {
+    color: var(--accent);
+    font-size: 18px;
+  }
+  .tabs > button {
+    padding: 4px 10px;
+    font-size: 12.5px;
     color: var(--muted);
   }
-  .tabs button.on {
-    background: var(--text);
-    border-color: var(--text);
-    color: #fff;
-  }
-  .tabs button.upd {
+  .tabs > button.upd {
     background: var(--accent);
     border-color: var(--accent);
     color: #fff;
+  }
+  .seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    background: #eceff6;
+    border-radius: 10px;
+  }
+  .seg button {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    height: 30px;
+  }
+  .seg button:hover:not(:disabled):not(.on) {
+    background: rgba(255, 255, 255, 0.6);
+  }
+  .seg button.on {
+    background: #fff;
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(20, 30, 60, 0.12);
+  }
+  .seg-fit {
+    align-self: flex-start;
+    min-width: 240px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 11px;
+    background: #eceff6;
+    color: #3b4459;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .chip.done {
+    background: #dcf3e4;
+    color: #14532d;
+  }
+  .chip.run {
+    background: #dbe7ff;
+    color: #1e3a8a;
+  }
+  .chip.error {
+    background: #fde4e1;
+    color: #7a1a12;
+  }
+  .ahead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sumline {
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  button.sm {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 13px;
   }
   .pane {
     display: flex;
@@ -1090,11 +1192,34 @@
     text-decoration: underline;
     color: var(--text);
   }
-  .dlopts {
-    border: 0;
+  .opts.dlopts {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    gap: 16px;
     max-height: none;
     overflow: visible;
-    max-width: 360px;
+    font-size: 14px;
+  }
+  .dlhead {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .dlhead h3 {
+    font-size: 16px;
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+  }
+  .dlopts select {
+    width: 100%;
+    height: 38px;
+    padding-top: 0;
+    padding-bottom: 0;
   }
   .bar {
     display: flex;
@@ -1259,6 +1384,17 @@
     padding: 9px 10px;
     box-shadow: 0 1px 3px rgba(20, 30, 60, 0.06);
   }
+  .range button {
+    height: 44px;
+  }
+  .range .dur:not(:empty) {
+    background: #eceff6;
+    color: #3b4459;
+    border-radius: 11px;
+    padding: 1px 9px;
+    font-size: 12px;
+    font-weight: 500;
+  }
   .range .s {
     border-color: var(--accent);
     background: #e8f0ff;
@@ -1393,13 +1529,6 @@
     margin: 0;
     font-size: 15px;
   }
-  .summary {
-    background: #f4f6fa;
-    font-size: 12.5px;
-    color: var(--muted);
-    justify-content: flex-start;
-    padding: 6px 10px;
-  }
   .opts {
     display: flex;
     flex-direction: column;
@@ -1464,17 +1593,21 @@
   }
   li {
     border: 1px solid var(--line);
-    border-left: 3px solid var(--accent);
-    padding: 7px 10px;
+    border-radius: 10px;
+    background: #fff;
+    padding: 10px 12px;
   }
-  li.done {
-    border-left-color: var(--ok);
+  li.running {
+    border-color: #bcd0f7;
+    background: #f5f8ff;
   }
   li.error {
-    border-left-color: var(--bad);
+    border-color: #f0b8b2;
   }
-  li.cancelled {
-    border-left-color: var(--muted);
+  .acts {
+    display: flex;
+    gap: 2px;
+    margin-top: 4px;
   }
   li.empty {
     border: 0;
@@ -1496,19 +1629,24 @@
     font-weight: 600;
   }
   .mini {
-    padding: 1px 7px;
-    font-size: 12px;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 7px;
+    font-size: 14px;
+    color: #4a5469;
   }
-  .len,
-  .st {
+  .acts .mini,
+  .row .mini {
+    border-color: transparent;
+    background: transparent;
+  }
+  .acts .mini:hover:not(:disabled),
+  .row .mini:hover:not(:disabled) {
+    background: #e7ebf3;
+  }
+  .len {
     color: var(--muted);
     font-size: 12px;
-  }
-  .st.done {
-    color: var(--ok);
-  }
-  .st.run {
-    color: var(--accent);
   }
   .name {
     font-size: 12px;
@@ -1550,8 +1688,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    direction: rtl;
-    text-align: left;
   }
   .backdrop {
     position: fixed;
