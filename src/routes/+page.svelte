@@ -118,6 +118,7 @@
   let dlKbps = $state(192);
   let dlCodec = $state<'h264' | 'vp9' | 'av1' | 'auto'>('h264');
   let dlAuto = $state(true);
+  let sliceAuto = $state(false);
   // 컷 작업 id(1부터)와 겹치지 않게 큰 값에서 시작한다 (취소·진행률이 id로 구분됨)
   let dlNextId = 1_000_000;
   const dlPending = $derived(
@@ -325,6 +326,7 @@
     dlKbps = saved.dlKbps ?? 192;
     dlPlaylist = saved.dlPlaylist ?? false;
     dlAuto = saved.dlAuto ?? true;
+    sliceAuto = saved.sliceAuto ?? false;
     checkUpdate();
     updateYtdlp(false); // yt-dlp 준비와 현재 버전 표시 (업데이트 확인은 간격이 지났을 때만)
     invoke<string | null>('hw_encoder')
@@ -364,7 +366,7 @@
   });
 
   $effect(() => {
-    localStorage.setItem('cut-dlp', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir, dlAudioOnly, dlMaxHeight, dlMode, dlAudio, dlCodec, dlKbps, dlPlaylist, dlAuto }));
+    localStorage.setItem('cut-dlp', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir, dlAudioOnly, dlMaxHeight, dlMode, dlAudio, dlCodec, dlKbps, dlPlaylist, dlAuto, sliceAuto }));
   });
 
   async function load() {
@@ -463,6 +465,7 @@
       percent: 0
     });
     start = end = null;
+    if (sliceAuto && !ytBusy) runQueue();
   }
 
   function preview() {
@@ -742,6 +745,7 @@
         </button>
       </div>
       <div class="sumline">{summary}</div>
+      <label class="auto"><input type="checkbox" bind:checked={sliceAuto} /> 큐에 넣으면 바로 다운로드</label>
 
       {#if showSettings}
         <div class="opts">
@@ -1130,6 +1134,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .auto {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
   }
   .sumline {
     font-size: 12.5px;
