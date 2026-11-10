@@ -1,4 +1,4 @@
-# cut-dlp 전용 경량 ffmpeg 빌드 (LGPL, GPL 컴포넌트 없음)
+# SliceYoutube 전용 경량 ffmpeg 빌드 (LGPL, GPL 컴포넌트 없음)
 #
 #  - 이 앱에 필요한 기능만 켠 정적 ffmpeg.exe 를 만들어 아티팩트(ffmpeg)로 올린다.
 #  - 앱 빌드와 분리되어 있어 한 번 만들어 두면 계속 재사용한다. (같은 버전/설정의 캐시가 있으면 다시 빌드하지 않음)
@@ -213,7 +213,7 @@ jobs:
           SRC=$(cat src-name.txt)
           cp "$SRC" "dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.${SRC#ffmpeg-src.}"   # LGPL 소스 제공
           {
-            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, static, cut-dlp 전용 구성)"
+            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, static, SliceYoutube 전용 구성)"
             echo "hwaccel: ${{ inputs.hwaccel }}   config rev: ${CONFIG_REV}"
             echo; cat version.txt
             echo; echo "== 정적 링크된 라이브러리 (MSYS2 패키지) =="
@@ -269,7 +269,7 @@ jobs:
           cp src-tauri/binaries/ffmpeg-x86_64-unknown-linux-gnu dist/
           cp .ffmpeg-build/ffmpeg-${{ inputs.ffmpeg_version }}.tar.gz dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.gz
           {
-            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, linux x86_64, cut-dlp 전용 구성)"
+            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, linux x86_64, SliceYoutube 전용 구성)"
             echo "config rev: ${CONFIG_REV}"
             echo; cat .ffmpeg-build/version-linux.txt
           } > dist/BUILD-INFO-linux.txt
@@ -307,7 +307,7 @@ jobs:
           cp src-tauri/binaries/ffmpeg-aarch64-apple-darwin dist/
           cp .ffmpeg-build/ffmpeg-${{ inputs.ffmpeg_version }}.tar.gz dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.gz
           {
-            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, macOS arm64, cut-dlp 전용 구성)"
+            echo "ffmpeg ${{ inputs.ffmpeg_version }} (LGPL, macOS arm64, SliceYoutube 전용 구성)"
             echo "config rev: ${CONFIG_REV}"
             echo; cat .ffmpeg-build/version-macos.txt
           } > dist/BUILD-INFO-macos.txt

@@ -22,7 +22,7 @@ foreach ($f in 'slice-youtube.exe', 'yt-dlp.exe', 'ffmpeg.exe', 'deno.exe') {
 }
 
 @"
-slice-youtube $Version (portable)
+SliceYoutube $Version (portable)
 
 실행: slice-youtube.exe
 - 같은 폴더의 yt-dlp.exe / ffmpeg.exe / deno.exe 를 사용합니다. 이동할 때는 폴더째 옮기세요.

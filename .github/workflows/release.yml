@@ -185,5 +185,5 @@ jobs:
           # 태그가 없으므로 gh 가 이 커밋에 v$VER 태그를 만든다
           gh release create "v$VER" "${FILES[@]}" \
             --target "$GITHUB_SHA" \
-            --title "slice-youtube $VER" \
+            --title "SliceYoutube $VER" \
             --generate-notes

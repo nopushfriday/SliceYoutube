@@ -1,4 +1,4 @@
-# slice-youtube
+# SliceYoutube
 
 YouTube 영상에서 **필요한 구간만** 골라 받는 Windows · Linux · macOS 데스크톱 앱.
 Tauri 2 · Svelte 5 · yt-dlp

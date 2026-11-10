@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fade, fly, slide } from 'svelte/transition';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { downloadDir, homeDir } from '@tauri-apps/api/path';
@@ -269,9 +270,9 @@
   // 업데이트 확인은 외부(GitHub) 요청이라 일정 간격으로만 한다. 사용자가 직접 누르면 항상 확인한다.
   const CHECK_EVERY = { app: 6, ytdlp: 12 }; // 시간
   type Checks = { app?: number; appFound?: boolean; ytdlp?: number };
-  const loadChecks = (): Checks => JSON.parse(localStorage.getItem('cut-dlp-checks') ?? '{}');
+  const loadChecks = (): Checks => JSON.parse(localStorage.getItem('sliceyoutube-checks') ?? '{}');
   function saveChecks(patch: Checks) {
-    localStorage.setItem('cut-dlp-checks', JSON.stringify({ ...loadChecks(), ...patch }));
+    localStorage.setItem('sliceyoutube-checks', JSON.stringify({ ...loadChecks(), ...patch }));
   }
   const isDue = (last: number | undefined, hours: number) => !last || Date.now() - last >= hours * 3_600_000;
 
@@ -312,8 +313,19 @@
         ].join(' · ')
   );
 
+  // 임시 프로젝트 이름(cut-dlp)으로 저장된 기존 설정을 새 키로 옮긴다
+  function migrateStorage() {
+    for (const [from, to] of [['cut-dlp', 'sliceyoutube'], ['cut-dlp-checks', 'sliceyoutube-checks']]) {
+      const v = localStorage.getItem(from);
+      if (v === null) continue;
+      if (localStorage.getItem(to) === null) localStorage.setItem(to, v);
+      localStorage.removeItem(from);
+    }
+  }
+
   onMount(() => {
-    const saved = JSON.parse(localStorage.getItem('cut-dlp') ?? '{}');
+    migrateStorage();
+    const saved = JSON.parse(localStorage.getItem('sliceyoutube') ?? '{}');
     audioOnly = saved.audioOnly ?? false;
     maxHeight = saved.maxHeight ?? 0;
     codec = saved.codec && saved.codec !== 'auto' ? saved.codec : 'h264';
@@ -366,7 +378,7 @@
   });
 
   $effect(() => {
-    localStorage.setItem('cut-dlp', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir, dlAudioOnly, dlMaxHeight, dlMode, dlAudio, dlCodec, dlKbps, dlPlaylist, dlAuto, sliceAuto }));
+    localStorage.setItem('sliceyoutube', JSON.stringify({ audioOnly, maxHeight, codec, hwAccel, outDir, dlAudioOnly, dlMaxHeight, dlMode, dlAudio, dlCodec, dlKbps, dlPlaylist, dlAuto, sliceAuto }));
   });
 
   async function load() {
@@ -606,7 +618,7 @@
 
 <main>
   <nav class="tabs">
-    <span class="brand"><i class="ti ti-scissors"></i> slice-youtube</span>
+    <span class="brand"><i class="ti ti-scissors"></i> SliceYoutube</span>
     <div class="seg">
       <button class:on={tab === 'slice'} onclick={() => (tab = 'slice')}><i class="ti ti-scissors"></i> 자르기</button>
       <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> 다운로드</button>
@@ -748,7 +760,7 @@
       <label class="auto"><input type="checkbox" bind:checked={sliceAuto} /> 큐에 넣으면 바로 다운로드</label>
 
       {#if showSettings}
-        <div class="opts">
+        <div class="opts" transition:slide={{ duration: 180 }}>
           <div class="seg" role="group" aria-label="받을 형식">
             <button class:on={!audioOnly} onclick={() => (audioOnly = false)}>영상</button>
             <button class:on={audioOnly} onclick={() => (audioOnly = true)}>오디오만 (mp3)</button>
@@ -801,7 +813,7 @@
 
       <ul>
         {#each segs as s (s.id)}
-          <li class={s.status}>
+          <li class={s.status} in:fly={{ y: -8, duration: 200 }} out:fade={{ duration: 120 }}>
             <div class="row">
               <span class="t">{fmt(s.start, 1)} – {fmt(s.end, 1)}</span>
               <span class="len">{fmt(s.end - s.start, 1)}초</span>
@@ -933,7 +945,7 @@
         <div class="ahead"><h3>목록</h3><span class="chip">{dlItems.length}</span></div>
         <ul>
           {#each dlItems as s (s.id)}
-            <li class={s.status}>
+            <li class={s.status} in:fly={{ y: -8, duration: 200 }} out:fade={{ duration: 120 }}>
               <div class="it">
                 <button class="thumb" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title="파일 열기" aria-label="파일 열기">
                   {#if s.thumb}<img src={s.thumb} alt="" />{:else}<i class="ti ti-video"></i>{/if}
@@ -1000,8 +1012,8 @@
 
   {#if showHelp}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="backdrop" onclick={() => (showHelp = false)}>
-      <div class="help" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1" aria-label="단축키">
+    <div class="backdrop" onclick={() => (showHelp = false)} transition:fade={{ duration: 140 }}>
+      <div class="help" onclick={(e) => e.stopPropagation()} in:fly={{ y: 14, duration: 200 }} role="dialog" tabindex="-1" aria-label="단축키">
         <h3>단축키</h3>
         <table>
           <tbody>
@@ -1162,6 +1174,35 @@
   .pane.off {
     display: none;
   }
+  /* 탭을 바꾸면 display가 다시 켜지면서 이 애니메이션이 처음부터 재생된다 */
+  .pane:not(.off) {
+    animation: pane-in 0.22s ease-out;
+  }
+  @keyframes pane-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  .chip {
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+  li {
+    transition:
+      background-color 0.25s ease,
+      border-color 0.25s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(*),
+    :global(*::before),
+    :global(*::after) {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
   .it {
     display: flex;
     gap: 8px;
@@ -1300,7 +1341,12 @@
     border-radius: 8px;
     padding: 7px 14px;
     cursor: pointer;
-    transition: background 0.12s;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      box-shadow 0.15s ease,
+      transform 0.1s ease;
     display: inline-flex;
     align-items: center;
     justify-content: center;
