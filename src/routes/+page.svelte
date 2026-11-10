@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { downloadDir, homeDir, join } from '@tauri-apps/api/path';
+  import { downloadDir, homeDir } from '@tauri-apps/api/path';
   import { open } from '@tauri-apps/plugin-dialog';
   import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
@@ -305,7 +305,7 @@
       .then((h) => (home = h))
       .catch(() => {});
     (async () => {
-      outDir = saved.outDir ?? (await join(await downloadDir(), 'cut-dlp'));
+      outDir = saved.outDir ?? (await downloadDir());
     })();
     const unInfo = listen<{ job: number; thumbnail: string | null; title: string | null }>('dl-info', (e) => {
       const d = dlItems.find((x) => x.id === e.payload.job);
