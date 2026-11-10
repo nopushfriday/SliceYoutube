@@ -579,7 +579,12 @@
 
   <div class="cols">
     <section class="left">
-      {#if info}
+      {#if loading}
+        <div class="empty-main" role="status">
+          <div class="loader"><i class="ti ti-scissors"></i></div>
+          <h2>영상 불러오는 중<span class="dots"></span></h2>
+        </div>
+      {:else if info}
         <h2 title={info.title}>{info.title}</h2>
         <div class="stagebox">
           {#if embedBlocked}
@@ -910,7 +915,7 @@
             {/each}
           </tbody>
         </table>
-        <p class="note">타임라인 — 휠: 확대/축소 · 핸들 드래그: 구간 조절 · Shift+드래그: 미세 조절</p>
+        <p class="note">타임라인 — 휠: 확대/축소 · Shift+드래그/휠: 좌우 이동</p>
         <button onclick={() => (showHelp = false)}>닫기 <kbd>Esc</kbd></button>
       </div>
     </div>
@@ -1228,6 +1233,55 @@
   .empty-main .keys {
     display: flex;
     gap: 16px;
+  }
+  .loader {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    display: grid;
+    place-items: center;
+    font-size: 26px;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .loader::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  .loader i {
+    animation: snip 1.2s ease-in-out infinite;
+  }
+  @keyframes snip {
+    0%,
+    100% {
+      transform: rotate(-18deg);
+    }
+    50% {
+      transform: rotate(18deg);
+    }
+  }
+  .dots::after {
+    content: '';
+    animation: dots 1.4s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0% {
+      content: '';
+    }
+    25% {
+      content: '.';
+    }
+    50% {
+      content: '..';
+    }
+    75% {
+      content: '...';
+    }
   }
   .big {
     font-size: 34px;

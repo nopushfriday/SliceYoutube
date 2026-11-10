@@ -34,7 +34,7 @@
 
   let detail: HTMLDivElement;
   let over: HTMLDivElement;
-  let drag = $state<'seek' | 'start' | 'end' | null>(null);
+  let drag = $state<'seek' | 'start' | 'end' | 'pan' | null>(null);
   let ovDrag = $state(false);
 
   function fit() {
@@ -90,6 +90,13 @@
 
   function dDown(e: PointerEvent, kind: 'seek' | 'start' | 'end') {
     e.stopPropagation();
+    // 트랙에서 Shift+드래그: 재생 위치는 두고 보이는 구간만 좌우로 이동
+    if (kind === 'seek' && e.shiftKey) {
+      drag = 'pan';
+      lastX = e.clientX;
+      detail.setPointerCapture(e.pointerId);
+      return;
+    }
     drag = kind;
     detail.setPointerCapture(e.pointerId);
     if (kind === 'seek') return onseek(dTime(e));
@@ -102,6 +109,11 @@
     if (!drag) return;
     if (drag === 'seek') return onseek(dTime(e));
     const w = detail.getBoundingClientRect().width;
+    if (drag === 'pan') {
+      wStart -= ((e.clientX - lastX) / w) * wLen;
+      lastX = e.clientX;
+      return fit();
+    }
     const dt = ((e.clientX - lastX) / w) * wLen * (e.shiftKey ? 0.1 : 1);
     lastX = e.clientX;
     cur = clamp(cur + dt, wStart, wEnd);
@@ -118,6 +130,11 @@
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const r = el.getBoundingClientRect();
+      // Shift+휠: 좌우 이동 (Shift를 누르면 브라우저가 세로 휠을 가로 휠(deltaX)로 바꿔 보낸다)
+      if (e.shiftKey) {
+        wStart += ((e.deltaX || e.deltaY) / r.width) * wLen;
+        return fit();
+      }
       const frac = clamp((e.clientX - r.left) / r.width, 0, 1);
       const tc = wStart + frac * wLen;
       wLen = clamp(wLen * (e.deltaY < 0 ? 0.8 : 1.25), minLen, duration);
@@ -185,7 +202,7 @@
   </div>
 
   <div class="cap">
-    <span>상세 · {fmt(wLen, 0)} 구간</span><span>휠: 확대/축소 · Shift+드래그: 미세 조절</span>
+    <span>상세 · {fmt(wLen, 0)} 구간</span><span>휠: 확대/축소 · Shift+드래그/휠: 좌우 이동</span>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
