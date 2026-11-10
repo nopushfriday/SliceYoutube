@@ -315,18 +315,7 @@
         ].join(' · ')
   );
 
-  // 임시 프로젝트 이름(cut-dlp)으로 저장된 기존 설정을 새 키로 옮긴다
-  function migrateStorage() {
-    for (const [from, to] of [['cut-dlp', 'sliceyoutube'], ['cut-dlp-checks', 'sliceyoutube-checks']]) {
-      const v = localStorage.getItem(from);
-      if (v === null) continue;
-      if (localStorage.getItem(to) === null) localStorage.setItem(to, v);
-      localStorage.removeItem(from);
-    }
-  }
-
   onMount(() => {
-    migrateStorage();
     document.documentElement.lang = lang.code;
     const saved = JSON.parse(localStorage.getItem('sliceyoutube') ?? '{}');
     audioOnly = saved.audioOnly ?? false;
