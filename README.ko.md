@@ -8,11 +8,11 @@
 
 ### 2시간짜리 영상 말고, 필요한 10초만.
 
-[![Windows](https://img.shields.io/badge/Windows-2563eb?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest) [![macOS](https://img.shields.io/badge/macOS-111827?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest) [![Linux](https://img.shields.io/badge/Linux-d97706?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-2563eb?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/nopushfriday/SliceYoutube/releases/latest) [![macOS](https://img.shields.io/badge/macOS-111827?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/nopushfriday/SliceYoutube/releases/latest) [![Linux](https://img.shields.io/badge/Linux-d97706?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/nopushfriday/SliceYoutube/releases/latest)
 
-[![Release](https://img.shields.io/github/v/release/nopushfriday/slice-youtube?style=flat-square&color=2563eb)](https://github.com/nopushfriday/slice-youtube/releases)
-[![Downloads](https://img.shields.io/github/downloads/nopushfriday/slice-youtube/total?style=flat-square&color=16a34a)](https://github.com/nopushfriday/slice-youtube/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/nopushfriday/slice-youtube/ci.yml?style=flat-square&label=CI)](https://github.com/nopushfriday/slice-youtube/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nopushfriday/SliceYoutube?style=flat-square&color=2563eb)](https://github.com/nopushfriday/SliceYoutube/releases)
+[![Downloads](https://img.shields.io/github/downloads/nopushfriday/SliceYoutube/total?style=flat-square&color=16a34a)](https://github.com/nopushfriday/SliceYoutube/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/nopushfriday/SliceYoutube/ci.yml?style=flat-square&label=CI)](https://github.com/nopushfriday/SliceYoutube/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-64748b?style=flat-square)
 [![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?style=flat-square&logo=tauri&logoColor=white)
@@ -38,7 +38,7 @@
 
 ## 설치
 
-[Releases](https://github.com/nopushfriday/slice-youtube/releases)에서 받습니다.
+[Releases](https://github.com/nopushfriday/SliceYoutube/releases)에서 받습니다.
 
 - `slice-youtube_<버전>_x64-setup.exe` — 설치 파일
 - `slice-youtube-<버전>-portable-x64.zip` — 압축만 풀면 실행되는 포터블 버전
