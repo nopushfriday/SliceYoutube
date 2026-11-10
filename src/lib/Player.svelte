@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { t } from './i18n.svelte';
 
   let {
     videoId,
@@ -109,7 +110,7 @@
 <div class="wrap">
   <div class="host" bind:this={host}></div>
   <!-- 클릭 시 재생/일시정지. iframe이 포커스를 가져가 단축키가 막히는 것을 방지 -->
-  <button class="shield" aria-label="재생/일시정지" onclick={toggle}></button>
+  <button class="shield" aria-label={t('playPause')} onclick={toggle}></button>
 </div>
 
 <style>
