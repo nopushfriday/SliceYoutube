@@ -48,11 +48,26 @@
   let updBusy = $state(false);
   let updPct = $state(0);
 
-  async function checkUpdate() {
+  let updChecking = $state(false);
+  let updMsg = $state('');
+
+  // force: 사용자가 직접 확인 (간격과 상관없이 확인하고 결과를 알려준다)
+  async function checkUpdate(force = false) {
+    const last = loadChecks();
+    // 새 버전을 찾았는데 설치하지 않았다면 간격과 상관없이 다시 알려준다
+    if (!force && !last.appFound && !isDue(last.app, CHECK_EVERY.app)) return;
+    updChecking = true;
+    updMsg = '';
     try {
       upd = await check();
+      saveChecks({ app: Date.now(), appFound: !!upd });
+      if (force && !upd) updMsg = '최신 버전입니다';
     } catch {
-      // 오프라인이거나 개발 실행이면 조용히 넘어간다
+      // 자동 확인은 오프라인이거나 개발 실행이면 조용히 넘어간다
+      if (force) updMsg = '확인 실패';
+    } finally {
+      updChecking = false;
+      if (updMsg) setTimeout(() => (updMsg = ''), 4000);
     }
   }
 
@@ -246,10 +261,21 @@
   let ytBusy = $state(true);
   let yt = $state<Yt>({ version: null, updated: false, error: null });
 
-  async function updateYtdlp() {
+  // 업데이트 확인은 외부(GitHub) 요청이라 일정 간격으로만 한다. 사용자가 직접 누르면 항상 확인한다.
+  const CHECK_EVERY = { app: 6, ytdlp: 12 }; // 시간
+  type Checks = { app?: number; appFound?: boolean; ytdlp?: number };
+  const loadChecks = (): Checks => JSON.parse(localStorage.getItem('cut-dlp-checks') ?? '{}');
+  function saveChecks(patch: Checks) {
+    localStorage.setItem('cut-dlp-checks', JSON.stringify({ ...loadChecks(), ...patch }));
+  }
+  const isDue = (last: number | undefined, hours: number) => !last || Date.now() - last >= hours * 3_600_000;
+
+  async function updateYtdlp(force = true) {
+    const check = force || isDue(loadChecks().ytdlp, CHECK_EVERY.ytdlp);
     ytBusy = true;
     try {
-      yt = await invoke<Yt>('ytdlp_update');
+      yt = await invoke<Yt>('ytdlp_update', { check });
+      if (check && !yt.error) saveChecks({ ytdlp: Date.now() });
     } catch (e) {
       yt = { version: yt.version, updated: false, error: String(e) };
     } finally {
@@ -296,7 +322,7 @@
     dlPlaylist = saved.dlPlaylist ?? false;
     dlAuto = saved.dlAuto ?? true;
     checkUpdate();
-    updateYtdlp(); // 앱을 열 때마다 yt-dlp 최신 버전 확인
+    updateYtdlp(false); // yt-dlp 준비와 현재 버전 표시 (업데이트 확인은 간격이 지났을 때만)
     invoke<string | null>('hw_encoder')
       .then((e) => (hwEnc = e))
       .catch(() => (hwEnc = null));
@@ -502,6 +528,8 @@
       }
     }
     running = false;
+    // 대기 중인 클립이 더 없으면 받아 둔 원본 구간은 바로 지워 저장 공간을 확보한다
+    if (!stopQueue && !segs.some((x) => x.status === 'pending')) invoke('clear_section_cache').catch(() => {});
   }
 
   function cancelAll() {
@@ -579,6 +607,11 @@
         <i class="ti {updBusy ? 'ti-loader-2 spin' : 'ti-arrow-up-circle'}"></i>
         {updBusy ? `업데이트 중 ${updPct}%` : `v${upd.version} 업데이트`}
       </button>
+    {:else}
+      <button class="check" onclick={() => checkUpdate(true)} disabled={updChecking} title="앱 업데이트 확인">
+        <i class="ti {updChecking ? 'ti-loader-2 spin' : 'ti-refresh'}"></i>
+        {updChecking ? '확인 중…' : updMsg || '업데이트 확인'}
+      </button>
     {/if}
   </nav>
 
@@ -597,7 +630,7 @@
     <button
       class="yt"
       class:bad={!!yt.error}
-      onclick={updateYtdlp}
+      onclick={() => updateYtdlp(true)}
       disabled={ytBusy || running}
       title={yt.error ? `${yt.error}\n눌러서 다시 확인` : '눌러서 yt-dlp 업데이트 확인'}
     >

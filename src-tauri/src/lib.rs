@@ -198,11 +198,15 @@ struct YtStatus {
     error: Option<String>,
 }
 
-/// yt-dlp를 최신 버전으로 업데이트한다. 앱 시작 시와 사용자가 요청할 때 호출된다.
+/// yt-dlp를 준비하고 현재 버전을 알려준다. `check`이면 최신 버전으로 업데이트도 확인한다.
+/// (확인은 GitHub 요청을 쓰므로 호출하는 쪽이 일정 간격으로만 `check`를 켠다)
 #[tauri::command]
-async fn ytdlp_update(app: AppHandle) -> Result<YtStatus, String> {
+async fn ytdlp_update(app: AppHandle, check: bool) -> Result<YtStatus, String> {
     let path = ensure_ytdlp(&app).await?;
     let before = version_of(&app, &path).await;
+    if !check {
+        return Ok(YtStatus { version: before, updated: false, error: None });
+    }
     let res = app.shell().command(&path).args(["-U"]).output().await;
     let after = version_of(&app, &path).await;
     let error = match res {
@@ -883,7 +887,8 @@ struct SectionCache {
 }
 
 /// 캐시 폴더가 차지할 수 있는 최대 크기. 넘으면 가장 오래 안 쓴 구간부터 지운다.
-const CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// (큐가 끝나거나 새 영상을 열 때, 앱을 시작할 때도 비우므로 한 큐 안에서 쓸 만큼이면 된다)
+const CACHE_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
 /// 캐시 파일 이름에 붙는 표식. 앞쪽이 영상 제목이다.
 const CACHE_MARK: &str = " [src-";
 
