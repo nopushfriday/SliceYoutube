@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { downloadDir, join } from '@tauri-apps/api/path';
+  import { downloadDir, homeDir, join } from '@tauri-apps/api/path';
   import { open } from '@tauri-apps/plugin-dialog';
   import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check, type Update } from '@tauri-apps/plugin-updater';
@@ -230,6 +230,15 @@
   // 감지된 하드웨어 H.264 인코더: undefined = 확인 중, null = 없음(CPU 인코딩)
   let hwEnc = $state<string | null | undefined>(undefined);
   let outDir = $state('');
+  // 사용자 폴더 안의 경로는 사용자 이름이 드러나지 않게 홈 폴더 기준으로 줄여 표시한다 (다른 드라이브는 전체 경로)
+  let home = $state('');
+  function shortPath(p: string): string {
+    const prefix = home.replace(/[\\/]+$/, '');
+    if (!prefix || p.length <= prefix.length) return p;
+    const head = p.slice(0, prefix.length);
+    const sep = p[prefix.length];
+    return head.toLowerCase() === prefix.toLowerCase() && (sep === '\\' || sep === '/') ? p.slice(prefix.length + 1) : p;
+  }
   let showSettings = $state(false);
   let showHelp = $state(false);
 
@@ -292,6 +301,9 @@
     invoke<string | null>('hw_encoder')
       .then((e) => (hwEnc = e))
       .catch(() => (hwEnc = null));
+    homeDir()
+      .then((h) => (home = h))
+      .catch(() => {});
     (async () => {
       outDir = saved.outDir ?? (await join(await downloadDir(), 'cut-dlp'));
     })();
@@ -767,8 +779,8 @@
         </button>
       {/if}
       <div class="folder">
-        <button class="path" onclick={pickDir} title="저장 폴더 변경: {outDir}">
-          <i class="ti ti-folder"></i><span>{outDir}</span>
+        <button class="path" onclick={pickDir} title="저장 폴더 변경: {shortPath(outDir)}">
+          <i class="ti ti-folder"></i><span>{shortPath(outDir)}</span>
         </button>
         <button class="mini" onclick={openOutDir} title="저장 폴더 열기" aria-label="저장 폴더 열기">
           <i class="ti ti-folder-open"></i>
@@ -862,7 +874,7 @@
                       <i class="ti ti-x"></i>
                     </button>
                   </div>
-                  <button class="name namebtn" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title={s.file ?? s.title ?? s.url}>
+                  <button class="name namebtn" disabled={s.status !== 'done' || !s.file} onclick={() => openFile(s.file)} title={s.file ? shortPath(s.file) : (s.title ?? s.url)}>
                     {s.file ? baseName(s.file) : (s.title ?? s.url)}
                   </button>
                   {#if s.status === 'running'}
@@ -892,8 +904,8 @@
           </button>
         {/if}
         <div class="folder">
-          <button class="path" onclick={pickDir} title="저장 폴더 변경: {outDir}">
-            <i class="ti ti-folder"></i><span>{outDir}</span>
+          <button class="path" onclick={pickDir} title="저장 폴더 변경: {shortPath(outDir)}">
+            <i class="ti ti-folder"></i><span>{shortPath(outDir)}</span>
           </button>
           <button class="mini" onclick={openOutDir} title="저장 폴더 열기" aria-label="저장 폴더 열기">
             <i class="ti ti-folder-open"></i>
