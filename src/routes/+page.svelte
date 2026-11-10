@@ -626,7 +626,7 @@
       onkeydown={(e) => e.key === 'Enter' && load()}
     />
     {#if info}<span class="meta">{info.channel} · {fmt(info.duration, 0)}</span>{/if}
-    <button onclick={load} disabled={loading || ytBusy || !url.trim()}>{loading ? '불러오는 중…' : '불러오기'}</button>
+    <button class="primary" onclick={load} disabled={loading || ytBusy || !url.trim()}>{loading ? '불러오는 중…' : '불러오기'}</button>
     <button
       class="yt"
       class:bad={!!yt.error}
@@ -850,7 +850,7 @@
         bind:value={dlUrl}
         onkeydown={(e) => e.key === 'Enter' && addDownload()}
       />
-      <button onclick={addDownload} disabled={!dlUrl.trim()}>큐에 추가</button>
+      <button class="primary" onclick={addDownload} disabled={!dlUrl.trim()}>큐에 추가</button>
     </header>
 
     <div class="cols">
@@ -991,11 +991,12 @@
     --card: #ffffff;
     --line: #e2e6ee;
     --text: #1c2333;
-    --muted: #6b7690;
+    --muted: #566078;
     --accent: #2563eb;
-    --end: #ea580c;
-    --ok: #16a34a;
-    --bad: #dc2626;
+    --go: #15803d;
+    --end: #c2410c;
+    --ok: #15803d;
+    --bad: #b42318;
   }
   :global(body) {
     margin: 0;
@@ -1175,20 +1176,31 @@
     opacity: 0.45;
     cursor: default;
   }
+  button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: var(--go);
+    border-color: var(--go);
     color: #fff;
     font-weight: 600;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
   }
   button.primary:hover:not(:disabled) {
-    background: #1d4fd0;
+    background: #166534;
   }
   button.danger {
     background: var(--bad);
     border-color: var(--bad);
     color: #fff;
     font-weight: 600;
+  }
+  button.danger:hover:not(:disabled) {
+    background: #912018;
   }
   .icon-btn {
     padding: 6px 9px;
@@ -1249,15 +1261,31 @@
   }
   .range .s {
     border-color: var(--accent);
-    background: rgba(37, 99, 235, 0.07);
+    background: #e8f0ff;
+  }
+  .range .s:hover:not(:disabled) {
+    background: #d6e4ff;
   }
   .range .e {
     border-color: var(--end);
-    background: rgba(234, 88, 12, 0.07);
+    background: #fff0e6;
+  }
+  .range .e:hover:not(:disabled) {
+    background: #ffe0cc;
   }
   .range .add {
-    border-color: var(--text);
+    background: var(--go);
+    border-color: var(--go);
+    color: #fff;
     font-weight: 600;
+  }
+  .range .add:hover:not(:disabled) {
+    background: #166534;
+  }
+  .range .add kbd {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.4);
+    color: #fff;
   }
   .range b {
     font-variant-numeric: tabular-nums;

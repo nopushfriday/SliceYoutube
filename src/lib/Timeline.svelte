@@ -366,6 +366,6 @@
     z-index: 2;
   }
   .handle.e {
-    background: #ea580c;
+    background: #c2410c;
   }
 </style>
