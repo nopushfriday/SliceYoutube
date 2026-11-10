@@ -98,6 +98,8 @@ struct DownloadReq {
     crop: Crop,
     formats: Vec<FormatInfo>,
     out_dir: String,
+    #[serde(skip)]
+    resolved: Option<Resolved>,
 }
 
 /// 다운로드 시작 시 알게 된 영상 정보 (큐 표시용)
@@ -114,6 +116,96 @@ struct Progress {
     percent: f64,
     /// "download" | "encode"
     phase: &'static str,
+}
+
+/// yt-dlp에 넘길 주소와, 주소를 바꿔 치우면서 잃게 되는 메타데이터
+struct Resolved {
+    url: String,
+    title: Option<String>,
+    channel: Option<String>,
+    thumbnail: Option<String>,
+}
+
+impl Resolved {
+    fn plain(url: &str) -> Self {
+        Resolved { url: url.to_string(), title: None, channel: None, thumbnail: None }
+    }
+
+    /// 출력 파일명 템플릿의 제목 부분. 직접 알아낸 제목이면 리터럴로 넣는다.
+    fn title_template(&self) -> String {
+        match &self.title {
+            Some(t) => template_literal(t),
+            None => "%(title).120B".to_string(),
+        }
+    }
+}
+
+/// yt-dlp 출력 템플릿에 그대로 넣을 수 있는 파일명용 문자열.
+/// 리터럴은 --windows-filenames 정리 대상이 아니므로 직접 정리한다.
+fn template_literal(s: &str) -> String {
+    let clean: String = s
+        .chars()
+        .map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c })
+        .take(120)
+        .collect();
+    let clean = clean.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    let clean = if clean.is_empty() { "chzzk" } else { clean };
+    clean.replace('%', "%%")
+}
+
+const CHZZK_API: &str = "https://api.chzzk.naver.com/service/v1";
+
+/// 치지직 쇼츠/클립 주소(chzzk.naver.com/shorts/ID, /clips/ID)에서 ID를 꺼낸다.
+fn chzzk_clip_id(url: &str) -> Option<&str> {
+    let rest = url.split_once("chzzk.naver.com/")?.1;
+    let mut seg = rest.split(['?', '#']).next()?.split('/');
+    if !matches!(seg.next()?, "clips" | "shorts") {
+        return None;
+    }
+    let id = seg.next()?;
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())).then_some(id)
+}
+
+async fn chzzk_get(client: &reqwest::Client, path: &str) -> Result<serde_json::Value, String> {
+    let text = client
+        .get(format!("{CHZZK_API}/{path}"))
+        .header("User-Agent", PREVIEW_UA)
+        .send()
+        .await
+        .map_err(|e| format!("치지직 서버에 연결하지 못했습니다: {e}"))?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if v["code"].as_i64() != Some(200) {
+        let msg = v["message"].as_str().unwrap_or("클립 정보를 가져오지 못했습니다");
+        return Err(format!("ERROR: [chzzk:clip] {msg}"));
+    }
+    Ok(v["content"].clone())
+}
+
+/// yt-dlp가 지원하지 않는 주소(치지직 쇼츠/클립)는 재생 매니페스트(MPD) 주소로 바꿔 넘긴다.
+/// 매니페스트는 일반 DASH라 이후의 포맷 선택·구간 다운로드는 그대로 동작한다.
+async fn resolve_url(url: &str) -> Result<Resolved, String> {
+    let Some(id) = chzzk_clip_id(url) else {
+        return Ok(Resolved::plain(url));
+    };
+    let client = reqwest::Client::new();
+    let play = chzzk_get(&client, &format!("play-info/clip/{id}")).await?;
+    let (Some(video_id), Some(key)) = (play["videoId"].as_str(), play["inKey"].as_str()) else {
+        return Err("ERROR: [chzzk:clip] 재생 정보를 찾지 못했습니다 (로그인이 필요한 클립일 수 있습니다)".into());
+    };
+    // 썸네일은 상세 API에만 있다. 실패해도 다운로드에는 지장이 없다.
+    let thumbnail = chzzk_get(&client, &format!("clips/{id}/detail"))
+        .await
+        .ok()
+        .and_then(|d| d["thumbnailImageUrl"].as_str().map(String::from));
+    Ok(Resolved {
+        url: format!("https://apis.naver.com/neonplayer/vodplay/v2/playback/{video_id}?key={key}"),
+        title: play["contentTitle"].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        channel: play["ownerChannel"]["channelName"].as_str().map(String::from),
+        thumbnail,
+    })
 }
 
 /// 번들된 sidecar들이 있는 폴더 (실행 파일과 같은 폴더)
@@ -597,7 +689,7 @@ async fn stream_url(
         ]
         .map(String::from),
     );
-    args.push(url);
+    args.push(resolve_url(&url).await?.url);
     let out = ytdlp_cmd(&app)
         .await?
         .args(args)
@@ -633,9 +725,10 @@ async fn stream_url(
 
 #[tauri::command]
 async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
+    let resolved = resolve_url(&url).await?;
     let mut args = base_args()?;
     args.extend(["-J", "--no-playlist", "--playlist-items", "1", "--no-warnings"].map(String::from));
-    args.push(url);
+    args.push(resolved.url.clone());
 
     let out = ytdlp_cmd(&app)
         .await?
@@ -700,13 +793,16 @@ async fn fetch_info(app: AppHandle, url: String) -> Result<VideoInfo, String> {
         embeddable: v["extractor_key"].as_str() == Some("Youtube")
             && v["playable_in_embed"].as_bool() != Some(false),
         id: v["id"].as_str().unwrap_or_default().to_string(),
-        title: v["title"].as_str().unwrap_or_default().to_string(),
+        title: resolved
+            .title
+            .clone()
+            .unwrap_or_else(|| v["title"].as_str().unwrap_or_default().to_string()),
         duration: v["duration"].as_f64().unwrap_or(0.0),
-        channel: v["channel"]
-            .as_str()
-            .or(v["uploader"].as_str())
-            .unwrap_or_default()
-            .to_string(),
+        channel: resolved
+            .channel
+            .clone()
+            .or_else(|| v["channel"].as_str().or(v["uploader"].as_str()).map(String::from))
+            .unwrap_or_default(),
         formats,
     })
 }
@@ -775,6 +871,7 @@ fn build_dl_args(
     vf: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let cap = req.max_height;
+    let resolved = req.resolved.as_ref().ok_or("주소를 해석하지 못했습니다")?;
     let mut args = base_args()?;
     args.extend(
         ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime"]
@@ -822,13 +919,14 @@ fn build_dl_args(
     args.extend([
         "-o".into(),
         format!(
-            "{dl_dir}/%(title).120B [{}-{}].%(ext)s",
+            "{dl_dir}/{} [{}-{}].%(ext)s",
+            resolved.title_template(),
             time_tag(req.start),
             time_tag(req.end)
         ),
     ]);
     args.extend(["--print".into(), "after_move:CUTDLP_FILE %(filepath)s".into()]);
-    args.push(req.url.clone());
+    args.push(resolved.url.clone());
     Ok(args)
 }
 
@@ -849,6 +947,7 @@ async fn download(
     if req.end <= req.start {
         return Err("끝 지점이 시작 지점보다 뒤여야 합니다".into());
     }
+    req.resolved = Some(resolve_url(&req.url).await?);
     req.crop.validate()?;
     // 자르기는 영상을 다시 인코딩해야 하므로 영상이 있으면 정확한 컷(재인코딩) 경로를 쓴다.
     let vf = if req.audio_only { None } else { req.crop.filter() };
@@ -985,6 +1084,8 @@ struct PlainReq {
     codec: String,
     hw_accel: bool,
     out_dir: String,
+    #[serde(skip)]
+    resolved: Option<Resolved>,
 }
 
 /// 받은 결과를 정리하는 ffmpeg 인자. 영상은 선택한 코덱과 다르면 그 코덱으로(auto는 지원 밖 코덱만 H.264로),
@@ -1056,6 +1157,7 @@ async fn plain_inner(
     let merge = req.mode != "original";
     let cap = req.max_height;
     let hf = if cap == 0 { String::new() } else { format!("[height<={cap}]") };
+    let resolved = req.resolved.as_ref().ok_or("주소를 해석하지 못했습니다")?;
     // 선택한 코덱을 제공하면 그 스트림을 우선 받아 변환을 피한다 (없으면 최고 화질로 받아 변환)
     let pref = match req.codec.as_str() {
         "h264" | "vp9" | "av1" => format!("[vcodec^={}]", codec_prefix(&req.codec)),
@@ -1081,16 +1183,22 @@ async fn plain_inner(
     args.extend([
         "-o".into(),
         // 재생목록의 같은 제목 영상이 서로 덮어쓰지 않도록 항목별 하위 폴더에 받는다
-        format!("{out_dir}/%(playlist_index|1)s/%(title).120B.%(ext)s"),
+        format!("{out_dir}/%(playlist_index|1)s/{}.%(ext)s", resolved.title_template()),
         "--print".into(),
-        "pre_process:CUTDLP_THUMB %(thumbnail)s".into(),
+        match &resolved.thumbnail {
+            Some(t) => format!("pre_process:CUTDLP_THUMB {}", t.replace('%', "%%")),
+            None => "pre_process:CUTDLP_THUMB %(thumbnail)s".into(),
+        },
         "--print".into(),
-        "pre_process:CUTDLP_TITLE %(title)s".into(),
+        match &resolved.title {
+            Some(t) => format!("pre_process:CUTDLP_TITLE {}", t.replace('%', "%%")),
+            None => "pre_process:CUTDLP_TITLE %(title)s".into(),
+        },
         "--print".into(),
         "after_move:CUTDLP_FILE %(filepath)s".into(),
         "--print".into(),
         "after_move:CUTDLP_META %(vcodec)s %(acodec)s %(duration)s %(height)s".into(),
-        req.url.clone(),
+        resolved.url.clone(),
     ]);
 
     let r = {
@@ -1210,6 +1318,7 @@ async fn download_plain(
     // 같은 이름 파일을 덮어쓰거나 건너뛰지 않도록 임시 폴더에서 받은 뒤 옮긴다
     let tmp = format!("{dir}/.cutdlp-tmp-{}", req.job);
     req.out_dir = tmp.clone();
+    req.resolved = Some(resolve_url(&req.url).await?);
     let res = plain_inner(&app, &jobs, &hw_cache, req).await;
     let out = res.and_then(|ps| ps.iter().map(|p| move_unique(p, &dir)).collect());
     let _ = std::fs::remove_dir_all(&tmp);
