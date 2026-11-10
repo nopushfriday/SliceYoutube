@@ -107,6 +107,11 @@ struct DownloadReq {
     /// 유튜브 라이브의 지난 구간 (start/end는 방송 시작 기준 초)
     #[serde(default)]
     live: bool,
+    /// 서로 겹치는 클립들의 합친 범위. 구간 캐시에 없을 때 이 범위를 한 번에 받아 겹치는 클립이 재사용한다.
+    #[serde(default)]
+    fetch_start: Option<f64>,
+    #[serde(default)]
+    fetch_end: Option<f64>,
 }
 
 /// 다운로드 시작 시 알게 된 영상 정보 (큐 표시용)
@@ -313,11 +318,15 @@ struct YtStatus {
     error: Option<String>,
 }
 
-/// yt-dlp를 최신 버전으로 업데이트한다. 앱 시작 시와 사용자가 요청할 때 호출된다.
+/// yt-dlp를 준비하고 현재 버전을 알려준다. `check`이면 최신 버전으로 업데이트도 확인한다.
+/// (확인은 GitHub 요청을 쓰므로 호출하는 쪽이 일정 간격으로만 `check`를 켠다)
 #[tauri::command]
-async fn ytdlp_update(app: AppHandle) -> Result<YtStatus, String> {
+async fn ytdlp_update(app: AppHandle, check: bool) -> Result<YtStatus, String> {
     let path = ensure_ytdlp(&app).await?;
     let before = version_of(&app, &path).await;
+    if !check {
+        return Ok(YtStatus { version: before, updated: false, error: None });
+    }
     let res = app.shell().command(&path).args(["-U"]).output().await;
     let after = version_of(&app, &path).await;
     let error = match res {
@@ -333,6 +342,8 @@ async fn ytdlp_update(app: AppHandle) -> Result<YtStatus, String> {
         ),
         Err(e) => Some(e.to_string()),
     };
+    // GitHub 요청 한도(403) 초과는 일시적이고 현재 버전은 정상이므로 실패로 표시하지 않는다
+    let error = error.filter(|e| !e.to_lowercase().contains("rate limit"));
     let updated = matches!((&before, &after), (Some(b), Some(a)) if a != b);
     Ok(YtStatus { version: after, updated, error })
 }
@@ -364,15 +375,29 @@ fn codec_prefix(codec: &str) -> &'static str {
     }
 }
 
-/// 파일명에 쓸 시간 표기 (콜론 불가): 90.5 -> "1m30s"
+/// 파일명에 쓸 시간 표기 (콜론 불가, 소수점 둘째 자리까지): 90.5 -> "1m30.50s"
 fn time_tag(sec: f64) -> String {
-    let t = sec.max(0.0) as u64;
-    let (h, m, s) = (t / 3600, (t % 3600) / 60, t % 60);
+    let cs = (sec.max(0.0) * 100.0).round() as u64;
+    let (h, m) = (cs / 360_000, cs % 360_000 / 6000);
+    let s = (cs % 6000) as f64 / 100.0;
     if h > 0 {
-        format!("{h}h{m:02}m{s:02}s")
+        format!("{h}h{m:02}m{s:05.2}s")
     } else {
-        format!("{m}m{s:02}s")
+        format!("{m}m{s:05.2}s")
     }
+}
+
+/// 이미 있는 파일을 덮어쓰거나 건너뛰지 않도록 " (2)", " (3)"… 을 붙인 경로를 돌려준다.
+fn unique_path(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    (2..)
+        .map(|n| path.with_file_name(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .expect("무한 반복자")
 }
 
 /// ffmpeg의 `time=HH:MM:SS.xx` 또는 yt-dlp의 `[download] 42.0%`에서 진행률(%) 추출
@@ -505,6 +530,7 @@ async fn hw_encoder(app: AppHandle, cache: State<'_, HwCache>) -> Result<Option<
 
 /// 다운로드한 파일을 지정 코덱으로 인코딩하는 ffmpeg 인자
 /// `hw`가 Some이면 H.264를 해당 하드웨어 인코더로 인코딩한다.
+/// `seek`는 입력에서 (시작 초, 길이 초)만 잘라 인코딩한다.
 fn encode_args(
     codec: &str,
     input: &str,
@@ -513,9 +539,15 @@ fn encode_args(
     bitrate: &str,
     hw: Option<&str>,
     vf: Option<&str>,
+    seek: Option<(f64, f64)>,
 ) -> Vec<String> {
+    let mut head: Vec<String> = ["-hide_banner", "-y"].map(String::from).to_vec();
+    if let Some((ss, t)) = seek {
+        head.extend(["-ss".to_string(), format!("{ss:.3}"), "-t".to_string(), format!("{t:.3}")]);
+    }
+    head.extend(["-i".to_string(), input.to_string()]);
     if let (Some(enc), "h264") = (hw, codec) {
-        let mut a: Vec<String> = ["-hide_banner", "-y", "-i", input].map(String::from).to_vec();
+        let mut a = head;
         if let Some(vf) = vf {
             a.extend(["-vf".to_string(), vf.to_string()]);
         }
@@ -523,7 +555,7 @@ fn encode_args(
         a.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output].map(String::from));
         return a;
     }
-    let mut a: Vec<&str> = vec!["-hide_banner", "-y", "-i", input];
+    let mut a: Vec<&str> = head.iter().map(String::as_str).collect();
     if let Some(vf) = vf {
         a.extend(["-vf", vf]);
     }
@@ -931,6 +963,25 @@ fn cut_encoder_args(
     v
 }
 
+/// 구간 다운로드의 정렬(-S)과 포맷 선택(-f) 값.
+/// 높이 상한(있다면) 내에서 해상도 → fps 순으로 최고 화질. 분리 스트림(bv+ba)이라 구간만 수신한다.
+fn section_format(src_codec: Option<&str>, cap: u32) -> (String, String) {
+    let sort = if cap == 0 { "res,fps".to_string() } else { format!("res:{cap},fps") };
+    let hf = if cap == 0 { String::new() } else { format!("[height<={cap}]") };
+    // 직접 https 스트림(DASH)을 우선하고, 없을 때만 그 외(HLS 등)로 대체한다.
+    let selector = match src_codec {
+        Some(c) => {
+            let p = codec_prefix(c);
+            format!(
+                "bv*[vcodec^={p}]{hf}[protocol=https]+ba[protocol=https]/bv*[vcodec^={p}]{hf}+ba/b[vcodec^={p}]{hf}[protocol=https]/b[vcodec^={p}]{hf}"
+            )
+        }
+        // 포맷 정보가 없는 사이트
+        None => format!("bv*{hf}[protocol=https]+ba[protocol=https]/bv*{hf}+ba/b{hf}"),
+    };
+    (sort, selector)
+}
+
 /// yt-dlp 다운로드 인자를 만든다. `cut_hw`가 Some이면 정확한 컷의 재인코딩을 해당 하드웨어 인코더로 한다.
 fn build_dl_args(
     req: &DownloadReq,
@@ -963,21 +1014,7 @@ fn build_dl_args(
     if req.audio_only {
         args.extend(["-x", "--audio-format", "mp3", "-f", "ba/b"].map(String::from));
     } else {
-        // 높이 상한(있다면) 내에서 해상도 → fps 순으로 최고 화질. 분리 스트림(bv+ba)이라 구간만 수신
-        let sort = if cap == 0 { "res,fps".to_string() } else { format!("res:{cap},fps") };
-        let hf = if cap == 0 { String::new() } else { format!("[height<={cap}]") };
-        // 직접 https 스트림(DASH)을 우선하고, 없을 때만 그 외(HLS 등)로 대체한다.
-        let selector = match src_codec {
-            Some(c) => {
-                let p = codec_prefix(c);
-                format!(
-                    "bv*[vcodec^={p}]{hf}[protocol=https]+ba[protocol=https]/bv*[vcodec^={p}]{hf}+ba\
-                     /b[vcodec^={p}]{hf}[protocol=https]/b[vcodec^={p}]{hf}"
-                )
-            }
-            // 포맷 정보가 없는 사이트
-            None => format!("bv*{hf}[protocol=https]+ba[protocol=https]/bv*{hf}+ba/b{hf}"),
-        };
+        let (sort, selector) = section_format(src_codec, cap);
         args.extend([
             "-S".to_string(),
             sort,
@@ -1002,6 +1039,241 @@ fn build_dl_args(
     Ok(args)
 }
 
+/// 받아 둔 원본 구간(무손실 복사) 하나. 같은 영상의 클립들이 이 파일에서 각자 잘라 인코딩한다.
+#[derive(Clone)]
+struct CacheEntry {
+    /// url + 화질 상한 + 받은 코덱. 같은 스트림에서 받은 구간만 서로 재사용할 수 있다.
+    key: String,
+    start: f64,
+    end: f64,
+    path: PathBuf,
+    /// yt-dlp가 파일명 규칙에 맞게 정리한 영상 제목
+    title: String,
+    used: u64,
+}
+
+#[derive(Default)]
+struct SectionCache {
+    entries: Mutex<Vec<CacheEntry>>,
+    tick: std::sync::atomic::AtomicU64,
+}
+
+/// 캐시 폴더가 차지할 수 있는 최대 크기. 넘으면 가장 오래 안 쓴 구간부터 지운다.
+/// (큐가 끝나거나 새 영상을 열 때, 앱을 시작할 때도 비우므로 한 큐 안에서 쓸 만큼이면 된다)
+const CACHE_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
+/// 캐시 파일 이름에 붙는 표식. 앞쪽이 영상 제목이다.
+const CACHE_MARK: &str = " [src-";
+
+impl SectionCache {
+    fn next_tick(&self) -> u64 {
+        self.tick.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// [start, end]를 모두 포함하는 받아 둔 구간
+    fn find(&self, key: &str, start: f64, end: f64) -> Option<CacheEntry> {
+        let tick = self.next_tick();
+        let mut entries = self.entries.lock().unwrap();
+        entries.retain(|e| e.path.exists());
+        let e = entries
+            .iter_mut()
+            .find(|e| e.key == key && e.start <= start + 0.001 && e.end >= end - 0.001)?;
+        e.used = tick;
+        Some(e.clone())
+    }
+
+    fn insert(&self, mut entry: CacheEntry) {
+        entry.used = self.next_tick();
+        let mut entries = self.entries.lock().unwrap();
+        entries.push(entry);
+        let size = |e: &CacheEntry| std::fs::metadata(&e.path).map(|m| m.len()).unwrap_or(0);
+        while entries.iter().map(size).sum::<u64>() > CACHE_LIMIT_BYTES && entries.len() > 1 {
+            let last = entries.len() - 1;
+            let Some(i) = (0..last).min_by_key(|&i| entries[i].used) else { break };
+            let _ = std::fs::remove_file(&entries[i].path);
+            entries.remove(i);
+        }
+    }
+
+    fn clear(&self, dir: &Path) {
+        self.entries.lock().unwrap().clear();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+fn section_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("sections"))
+}
+
+/// 새 영상을 열면 이전 영상의 받아 둔 구간은 쓸 일이 없으므로 비운다.
+#[tauri::command]
+fn clear_section_cache(app: AppHandle, cache: State<'_, SectionCache>) -> Result<(), String> {
+    cache.clear(&section_cache_dir(&app)?);
+    Ok(())
+}
+
+/// ffmpeg로 파일 길이(초)를 읽는다. (ffprobe는 번들하지 않는다)
+async fn media_duration(app: &AppHandle, path: &Path) -> Option<f64> {
+    let out = app.shell().sidecar("ffmpeg").ok()?.args(["-hide_banner", "-i"]).arg(path).output().await.ok()?;
+    parse_duration(&String::from_utf8_lossy(&out.stderr))
+}
+
+/// `ffmpeg -i` 출력의 "Duration: 00:00:20.00, ..." 에서 초를 읽는다.
+fn parse_duration(text: &str) -> Option<f64> {
+    let d = text.split("Duration:").nth(1)?.trim_start().split(',').next()?.trim();
+    d.split(':').try_fold(0.0, |acc, p| p.parse::<f64>().ok().map(|v| acc * 60.0 + v))
+}
+
+/// 원본 구간 [fetch_start, fetch_end]만 재인코딩 없이 받아 캐시에 둔다.
+/// 받은 파일의 시간이 원본 영상 시간과 같다고 확인되지 않으면 None (호출한 쪽이 기존 방식으로 처리).
+async fn fetch_section(
+    app: &AppHandle,
+    jobs: &State<'_, Jobs>,
+    req: &DownloadReq,
+    key: &str,
+    src_codec: Option<&str>,
+    fetch_start: f64,
+    fetch_end: f64,
+) -> Result<Option<CacheEntry>, String> {
+    use std::hash::{Hash, Hasher};
+    let dir = section_cache_dir(app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    let tag = format!("src-{:x}-{}-{}", h.finish(), (fetch_start * 100.0) as u64, (fetch_end * 100.0) as u64);
+    let remove_partial = || {
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for f in rd.flatten().filter(|f| f.file_name().to_string_lossy().contains(&tag)) {
+                let _ = std::fs::remove_file(f.path());
+            }
+        }
+    };
+
+    let resolved = req.resolved.as_ref().ok_or("주소를 해석하지 못했습니다")?;
+    let (sort, selector) = section_format(src_codec, req.max_height);
+    let mut args = base_args()?;
+    args.extend(
+        ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime"]
+            .map(String::from),
+    );
+    args.extend([
+        "--download-sections".to_string(),
+        format!("*{fetch_start}-{fetch_end}"),
+        // 받은 파일의 시간을 원본 영상의 시간 그대로 둔다. (없으면 구간 시작에 따라 0초 기준이 달라진다)
+        "--downloader-args".into(),
+        "ffmpeg_i:-copyts".into(),
+        "-S".into(),
+        sort,
+        "-f".into(),
+        selector,
+        "--merge-output-format".into(),
+        "mkv".into(),
+        "-o".into(),
+        format!(
+            "{}/{}{CACHE_MARK}{}].%(ext)s",
+            dir.to_string_lossy().replace('\\', "/"),
+            resolved.title_template(),
+            &tag["src-".len()..]
+        ),
+        "--print".into(),
+        "after_move:CUTDLP_FILE %(filepath)s".into(),
+        "--match-filters".into(),
+        "!is_live".into(),
+        "--".into(),
+        resolved.url.clone(),
+    ]);
+    let cmd = ytdlp_cmd(app).await?.args(args);
+    let r = run_job(app, jobs, req.job, cmd, (fetch_end - fetch_start).max(0.1), "download").await?;
+    if r.cancelled {
+        remove_partial();
+        return Err("cancelled".into());
+    }
+    if r.code != Some(0) {
+        remove_partial();
+        return Err(if r.last_error.is_empty() { "다운로드에 실패했습니다".into() } else { r.last_error });
+    }
+    let Some(file) = r.file else {
+        remove_partial();
+        return Ok(None);
+    };
+    let path = PathBuf::from(&file);
+    // 받은 파일의 시간 0이 원본 영상의 0초와 같아야(= 길이가 받은 끝 지점 이상) 원본 시간으로 바로 자를 수 있다.
+    let absolute = media_duration(app, &path).await.is_some_and(|d| d >= fetch_end - 1.0);
+    let title = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .and_then(|s| s.rsplit_once(CACHE_MARK).map(|(t, _)| t.to_string()));
+    let (true, Some(title)) = (absolute, title) else {
+        remove_partial();
+        return Ok(None);
+    };
+    Ok(Some(CacheEntry { key: key.to_string(), start: fetch_start, end: fetch_end, path, title, used: 0 }))
+}
+
+/// 클립을 구간 캐시에서 잘라 인코딩해 저장한다. 캐시에 없으면 먼저 받는다(겹치는 클립들의 합친 범위).
+/// 캐시를 쓸 수 없는 경우(받은 파일의 시간 기준이 확인되지 않음)에는 None을 돌려준다.
+#[allow(clippy::too_many_arguments)]
+async fn download_cached(
+    app: &AppHandle,
+    jobs: &State<'_, Jobs>,
+    cache: &State<'_, SectionCache>,
+    req: &DownloadReq,
+    src_codec: Option<&str>,
+    enc_codec: &str,
+    h264_enc: &str,
+    bitrate: &str,
+    hw: Option<&str>,
+    vf: Option<&str>,
+) -> Result<Option<String>, String> {
+    let key = format!("{}|{}|{}", req.url, req.max_height, src_codec.unwrap_or("-"));
+    let entry = match cache.find(&key, req.start, req.end) {
+        Some(e) => e,
+        None => {
+            let fs = req.fetch_start.map_or(req.start, |v| v.min(req.start)).max(0.0);
+            let fe = req.fetch_end.map_or(req.end, |v| v.max(req.end));
+            let Some(e) = fetch_section(app, jobs, req, &key, src_codec, fs, fe).await? else {
+                return Ok(None);
+            };
+            cache.insert(e.clone());
+            e
+        }
+    };
+
+    std::fs::create_dir_all(&req.out_dir).map_err(|e| e.to_string())?;
+    let name = format!("{} [{}-{}].mp4", entry.title, time_tag(req.start), time_tag(req.end));
+    let final_path = unique_path(&Path::new(req.out_dir.trim_end_matches(['/', '\\'])).join(name));
+    let (input, output) = (entry.path.to_string_lossy().into_owned(), final_path.to_string_lossy().into_owned());
+    let span = (req.end - req.start).max(0.1);
+    let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
+    let encode = |hw: Option<&str>| -> Result<Command, String> {
+        Ok(app.shell().sidecar("ffmpeg").map_err(|e| e.to_string())?.args(encode_args(
+            enc_codec,
+            &input,
+            &output,
+            h264_enc,
+            bitrate,
+            hw,
+            vf,
+            Some((req.start, span)),
+        )))
+    };
+    // H.264는 하드웨어 인코더가 있으면 먼저 시도하고, 실패하면 CPU 인코딩으로 자동 재시도
+    let hw_try = if enc_codec == "h264" { hw } else { None };
+    let mut e = run_job(app, jobs, req.job, encode(hw_try)?, span, "encode").await?;
+    if hw_try.is_some() && !e.cancelled && e.code != Some(0) {
+        let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
+        e = run_job(app, jobs, req.job, encode(None)?, span, "encode").await?;
+    }
+    if e.cancelled {
+        let _ = std::fs::remove_file(&final_path);
+        return Err("cancelled".into());
+    }
+    if e.code != Some(0) {
+        let _ = std::fs::remove_file(&final_path);
+        return Err(if e.last_error.is_empty() { "인코딩에 실패했습니다".into() } else { e.last_error });
+    }
+    Ok(Some(output))
+}
+
 /// 지정 구간만 다운로드한다. (--download-sections: ffmpeg가 HTTP Range로 해당 구간만 요청)
 ///
 /// 코덱 지정 시:
@@ -1014,10 +1286,11 @@ async fn download(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     hw_cache: State<'_, HwCache>,
+    section_cache: State<'_, SectionCache>,
     outputs: State<'_, Outputs>,
     req: DownloadReq,
 ) -> Result<String, String> {
-    let path = download_impl(app, jobs, hw_cache, req).await?;
+    let path = download_impl(app, jobs, hw_cache, section_cache, req).await?;
     outputs.add(std::slice::from_ref(&path));
     Ok(path)
 }
@@ -1026,6 +1299,7 @@ async fn download_impl(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     hw_cache: State<'_, HwCache>,
+    section_cache: State<'_, SectionCache>,
     mut req: DownloadReq,
 ) -> Result<String, String> {
     if req.end <= req.start {
@@ -1080,8 +1354,28 @@ async fn download_impl(
     } else {
         None
     };
+    // 영상은 원본 구간을 한 번 받아 캐시에 두고 클립마다 거기서 잘라 인코딩한다. (겹치는 구간을 다시 받지 않는다)
+    if !req.audio_only {
+        let enc_codec = if want_codec { want } else { src_codec.unwrap_or("h264") };
+        if let Some(path) = download_cached(
+            &app,
+            &jobs,
+            &section_cache,
+            &req,
+            src_codec,
+            enc_codec,
+            &h264_enc,
+            bitrate,
+            hw.as_deref(),
+            vf,
+        )
+        .await?
+        {
+            return Ok(path);
+        }
+    }
     // 정확한 컷의 재인코딩을 하드웨어로 하려면 받는 스트림이 H.264여야 한다.
-    let cut_hw = if req.accurate && src_codec == Some("h264") { hw.as_deref() } else { None };
+    let cut_hw =if req.accurate && src_codec == Some("h264") { hw.as_deref() } else { None };
 
     let mut r = {
         let args = build_dl_args(&req, &dl_dir, src_codec, &h264_enc, bitrate, cut_hw, vf)?;
@@ -1130,7 +1424,7 @@ async fn download_impl(
             .shell()
             .sidecar("ffmpeg")
             .map_err(|e| e.to_string())?
-            .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate, hw, vf)))
+            .args(encode_args(want, &downloaded, &final_path, &h264_enc, bitrate, hw, vf, None)))
     };
     // H.264 변환은 하드웨어 인코더가 있으면 먼저 시도하고, 실패하면 CPU 인코딩으로 자동 재시도
     let hw_try = if want == "h264" { hw.as_deref() } else { None };
@@ -1488,6 +1782,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Jobs::default())
         .manage(HwCache::default())
+        .manage(SectionCache::default())
         .manage(StreamProxy::default())
         .manage(Outputs::default())
         .manage(live::LiveCancel::default())
@@ -1504,8 +1799,16 @@ pub fn run() {
             cancel,
             open_output,
             ytdlp_update,
-            hw_encoder
+            hw_encoder,
+            clear_section_cache
         ])
+        .setup(|app| {
+            // 이전 실행에서 남은 받아 둔 구간은 쓸 수 없으므로 시작할 때 비운다
+            if let Ok(dir) = section_cache_dir(app.handle()) {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -1579,8 +1882,54 @@ mod tests {
 
     #[test]
     fn formats_time_tag_without_colons() {
-        assert_eq!(time_tag(90.5), "1m30s");
-        assert_eq!(time_tag(3725.0), "1h02m05s");
-        assert_eq!(time_tag(-3.0), "0m00s");
+        assert_eq!(time_tag(90.5), "1m30.50s");
+        assert_eq!(time_tag(3725.0), "1h02m05.00s");
+        assert_eq!(time_tag(-3.0), "0m00.00s");
+        assert_eq!(time_tag(10.1), "0m10.10s");
+        assert_eq!(time_tag(59.999), "1m00.00s");
+    }
+
+    #[test]
+    fn parses_ffmpeg_duration() {
+        assert_eq!(parse_duration("Input #0\n  Duration: 00:01:02.50, start: 0.000000, bitrate: 1 kb/s"), Some(62.5));
+        assert_eq!(parse_duration("Duration: N/A, start: 0"), None);
+    }
+
+    #[test]
+    fn encode_args_seek_goes_before_input() {
+        let a = encode_args("h264", "in.mkv", "out.mp4", "libopenh264", "8M", None, None, Some((10.1, 8.4)));
+        let (ss, i) = (a.iter().position(|x| x == "-ss").unwrap(), a.iter().position(|x| x == "-i").unwrap());
+        assert!(ss < i);
+        assert_eq!(&a[ss..ss + 4], ["-ss", "10.100", "-t", "8.400"]);
+        assert!(encode_args("h264", "in.mkv", "out.mp4", "libopenh264", "8M", None, None, None).iter().all(|x| x != "-ss"));
+    }
+
+    #[test]
+    fn section_cache_reuses_only_covering_same_stream() {
+        let dir = std::env::temp_dir().join(format!("cutdlp-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.mkv");
+        std::fs::write(&path, b"x").unwrap();
+        let cache = SectionCache::default();
+        cache.insert(CacheEntry { key: "u|0|h264".into(), start: 8.0, end: 20.0, path, title: "t".into(), used: 0 });
+        assert!(cache.find("u|0|h264", 10.1, 18.5).is_some());
+        assert!(cache.find("u|0|h264", 8.0, 20.0).is_some());
+        assert!(cache.find("u|0|h264", 7.0, 18.5).is_none(), "범위 밖은 재사용하지 않는다");
+        assert!(cache.find("u|0|h264", 10.0, 21.0).is_none());
+        assert!(cache.find("u|720|h264", 10.1, 18.5).is_none(), "화질 상한이 다르면 재사용하지 않는다");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unique_path_appends_number_when_taken() {
+        let dir = std::env::temp_dir().join(format!("cutdlp-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a [0m01.00s-0m02.00s].mp4");
+        assert_eq!(unique_path(&p), p);
+        std::fs::write(&p, b"x").unwrap();
+        assert_eq!(unique_path(&p), dir.join("a [0m01.00s-0m02.00s] (2).mp4"));
+        std::fs::write(dir.join("a [0m01.00s-0m02.00s] (2).mp4"), b"x").unwrap();
+        assert_eq!(unique_path(&p), dir.join("a [0m01.00s-0m02.00s] (3).mp4"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

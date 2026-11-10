@@ -8,7 +8,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $bin = Join-Path $root 'src-tauri\binaries'
 New-Item -ItemType Directory -Force $bin | Out-Null
 $triple = ((rustc -vV | Select-String 'host:').ToString() -split ' ')[1]
-$tmp = Join-Path ([IO.Path]::GetTempPath()) ("cut-dlp-" + [guid]::NewGuid().ToString('N'))
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ("sliceyoutube-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 $isWin = $IsWindows -or $env:OS -eq 'Windows_NT'

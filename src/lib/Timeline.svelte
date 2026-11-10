@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { clamp, fmt } from './util';
+  import { t } from './i18n.svelte';
 
   type Clip = { start: number; end: number; status: string };
 
@@ -173,7 +174,7 @@
 </script>
 
 <div class="tl">
-  <div class="cap"><span>전체</span><span>점선 박스 = 확대 구간 · 색 막대 = 큐에 담은 클립</span></div>
+  <div class="cap"><span>{t('tl.all')}</span><span>{t('tl.legend')}</span></div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="over"
@@ -202,7 +203,7 @@
   </div>
 
   <div class="cap">
-    <span>상세 · {fmt(wLen, 0)} 구간</span><span>휠: 확대/축소 · Shift+드래그/휠: 좌우 이동</span>
+    <span>{t('tl.detail', { n: fmt(wLen, 0) })}</span><span>{t('tl.hint')}</span>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -237,7 +238,7 @@
       <div
         class="handle s"
         style:left="{dPct(start)}%"
-        title="시작 {fmt(start, 2)}"
+        title={t('tl.startTip', { t: fmt(start, 2) })}
         onpointerdown={(e) => dDown(e, 'start')}
       ></div>
     {/if}
@@ -246,7 +247,7 @@
       <div
         class="handle e"
         style:left="{dPct(end)}%"
-        title="끝 {fmt(end, 2)}"
+        title={t('tl.endTip', { t: fmt(end, 2) })}
         onpointerdown={(e) => dDown(e, 'end')}
       ></div>
     {/if}
@@ -366,6 +367,6 @@
     z-index: 2;
   }
   .handle.e {
-    background: #ea580c;
+    background: #c2410c;
   }
 </style>

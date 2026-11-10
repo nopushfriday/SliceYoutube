@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from './i18n.svelte';
   // 프리미어 프로식 수치 조절: 숫자를 좌우로 드래그하면 값이 바뀌고, 클릭하면 직접 입력한다.
   let {
     value,
@@ -54,7 +55,7 @@
 {:else}
   <span
     class="num"
-    title="드래그: 조절 (Shift: 미세) · 클릭: 직접 입력"
+    title={t('scrub.tip')}
     onpointerdown={down}
     onpointermove={move}
     onpointerup={up}

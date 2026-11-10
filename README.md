@@ -1,104 +1,132 @@
-# slice-youtube
+<div align="center">
 
-YouTube 영상에서 **필요한 구간만** 골라 받는 Windows · Linux · macOS 데스크톱 앱.
-Tauri 2 · Svelte 5 · yt-dlp
+<img src="src-tauri/icons/128x128.png" width="96" alt="SliceYoutube icon">
 
-## 주요 기능
+# SliceYoutube
 
-- 영상을 보면서 시작/끝 지점을 지정하고, 여러 구간을 큐에 담아 순서대로 다운로드
-- 전체를 받지 않고 `yt-dlp --download-sections`로 **지정 구간만** 수신
-- 코덱 선택: 자동 / H.264 / VP9 / AV1 (영상이 해당 코덱을 제공하지 않으면 받은 뒤 인코딩)
-- 오디오만(mp3) 추출
+**English** · [한국어](README.ko.md)
 
-## 설치
+### Grab just the 10 seconds you want — not the 2-hour video.
 
-[Releases](https://github.com/nopushfriday/slice-youtube/releases)에서 받습니다.
+[![Windows](https://img.shields.io/badge/Windows-2563eb?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest) [![macOS](https://img.shields.io/badge/macOS-111827?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest) [![Linux](https://img.shields.io/badge/Linux-d97706?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/nopushfriday/slice-youtube/releases/latest)
 
-- `slice-youtube_<버전>_x64-setup.exe` — 설치 파일
-- `slice-youtube-<버전>-portable-x64.zip` — 압축만 풀면 실행되는 포터블 버전
-- `slice-youtube_<버전>_amd64.AppImage` — Linux (x86_64)
-- `slice-youtube_<버전>_aarch64.dmg` — macOS (Apple Silicon)
+[![Release](https://img.shields.io/github/v/release/nopushfriday/slice-youtube?style=flat-square&color=2563eb)](https://github.com/nopushfriday/slice-youtube/releases)
+[![Downloads](https://img.shields.io/github/downloads/nopushfriday/slice-youtube/total?style=flat-square&color=16a34a)](https://github.com/nopushfriday/slice-youtube/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/nopushfriday/slice-youtube/ci.yml?style=flat-square&label=CI)](https://github.com/nopushfriday/slice-youtube/actions/workflows/ci.yml)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-64748b?style=flat-square)
+[![License](https://img.shields.io/badge/license-MIT-orange?style=flat-square)](LICENSE)
+![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?style=flat-square&logo=tauri&logoColor=white)
+![Svelte](https://img.shields.io/badge/Svelte-5-ff3e00?style=flat-square&logo=svelte&logoColor=white)
 
-> macOS 빌드는 Apple 개발자 서명/공증 없이 배포되므로, 처음 실행 시 "확인되지 않은 개발자" 경고가 뜹니다. 시스템 설정 → 개인정보 보호 및 보안에서 "그래도 열기"를 누르거나, 터미널에서 `xattr -dr com.apple.quarantine /Applications/slice-youtube.app` 을 실행하세요.
+[Install](#install) · [Usage](#usage) · [Shortcuts](#shortcuts) · [Build](#build)
 
-## 사용법
+<img src="docs/screenshot-slice.jpg" width="820" alt="SliceYoutube with a 7.5 s to 12.6 s range of Me at the zoo queued as a clip">
 
-1. 영상 URL을 입력해 불러옵니다.
-2. 재생하면서 `Q`로 시작, `W`로 끝 지점을 지정합니다. (타임라인 핸들을 끌어도 됩니다)
-3. `Enter`로 큐에 추가하고, 필요한 만큼 반복한 뒤 다운로드를 시작합니다.
+<sub>Watch, set the range with Q / W, press Enter to queue it — only that range is downloaded.</sub>
 
-### 단축키
+</div>
 
-| 키 | 동작 |
+## Features
+
+- ✂️ **Range-only download** — fetches just the selected part with `yt-dlp --download-sections`, not the whole video
+- 🎯 **Precise range picking** — watch the video, press `Q` / `W` or drag the timeline handles, step frame by frame
+- 📋 **Queue** — add several ranges from one video and download them in order, or auto-download as soon as a range is queued
+- 🎞️ **Codec choice** — Auto / H.264 / VP9 / AV1 (re-encoded after download if the video doesn't offer it), with optional hardware encoding
+- 🎵 **Audio-only (mp3)** and **picture crop**
+- ⬇️ **Plain download tab** — full videos and playlists with merge / original, audio format and bitrate options
+- 🌐 **14 UI languages** — picked from your system language, changeable in the app
+
+## Install
+
+Download from [Releases](https://github.com/nopushfriday/slice-youtube/releases).
+
+- `slice-youtube_<version>_x64-setup.exe` — installer
+- `slice-youtube-<version>-portable-x64.zip` — portable build, just unzip and run
+- `slice-youtube_<version>_amd64.AppImage` — Linux (x86_64)
+- `slice-youtube_<version>_aarch64.dmg` — macOS (Apple Silicon)
+
+## Usage
+
+1. Enter a video URL and load it.
+2. While playing, press `Q` to set the start and `W` to set the end. (You can also drag the timeline handles.)
+3. Press `Enter` to add it to the queue, repeat as needed, then start the download.
+
+### Shortcuts
+
+| Key | Action |
 |---|---|
-| `Q` / `W` | 시작 / 끝 지점 지정 |
-| `Space` | 재생 · 일시정지 |
-| `←` `→` | 5초 이동 (`Shift` 1초) |
-| `,` `.` | 1프레임 이동 |
-| `\` | 구간 반복 |
-| `Enter` | 큐에 추가 |
+| `Q` / `W` | Set start / end point |
+| `Space` | Play / pause |
+| `←` `→` | Seek 5 s (`Shift`: 1 s) |
+| `,` `.` | Step one frame |
+| `\` | Loop the range |
+| `Enter` | Add to queue |
 
-타임라인 핸들을 끌면 영상 위치가 따라가며, `Shift`를 누르고 끌면 미세 조절됩니다.
+Dragging a timeline handle moves the video position with it; hold `Shift` while dragging for fine adjustment.
 
-### 알려진 사항
+### Known issues
 
-- AV1 인코딩(영상이 AV1을 제공하지 않을 때의 폴백)은 libaom을 쓰므로 H.264/VP9보다 느립니다.
+- The macOS build is distributed without Apple developer signing/notarization, so the first launch shows an "unidentified developer" warning. Click "Open Anyway" in System Settings → Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/slice-youtube.app` in a terminal.
+- AV1 encoding (the fallback when a video doesn't offer AV1) uses libaom, so it is slower than H.264/VP9.
 
-## 빌드
+## Build
 
-필요: Node.js, pnpm, Rust
+Requires: Node.js, pnpm, Rust
 
 ### Windows (PowerShell)
 
 ```powershell
 pnpm install
-pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno 받기
-pwsh scripts/build-ffmpeg-win.ps1    # ffmpeg 9.0.2 빌드
-pnpm tauri build                     # 설치 파일 (NSIS)
-pwsh scripts/make-portable.ps1       # 포터블 zip
-pwsh scripts/verify-build.ps1        # 결과물 검증 (선택)
+pwsh scripts/fetch-binaries.ps1      # fetch yt-dlp, deno
+pwsh scripts/build-ffmpeg-win.ps1    # build ffmpeg 9.0.2
+pnpm tauri build                     # installer (NSIS)
+pwsh scripts/make-portable.ps1       # portable zip
+pwsh scripts/verify-build.ps1        # verify the output (optional)
 ```
 
-- 설치 파일: `src-tauri/target/release/bundle/nsis/slice-youtube_<버전>_x64-setup.exe`
-- 포터블 zip: `dist/slice-youtube-<버전>-portable-x64.zip`
+- Installer: `src-tauri/target/release/bundle/nsis/slice-youtube_<version>_x64-setup.exe`
+- Portable zip: `dist/slice-youtube-<version>-portable-x64.zip`
 
-### Linux (Debian/Ubuntu 계열)
+### Linux (Debian/Ubuntu)
 
 ```bash
 pnpm install
-pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno 받기
-bash scripts/build-ffmpeg-linux.sh   # ffmpeg 9.0.2 빌드 (sudo 필요)
+pwsh scripts/fetch-binaries.ps1      # fetch yt-dlp, deno
+bash scripts/build-ffmpeg-linux.sh   # build ffmpeg 9.0.2 (needs sudo)
 pnpm tauri build                     # AppImage
-bash scripts/verify-build-linux.sh   # 결과물 검증 (선택)
+bash scripts/verify-build-linux.sh   # verify the output (optional)
 ```
 
-- AppImage: `src-tauri/target/release/bundle/appimage/slice-youtube_<버전>_amd64.AppImage`
+- AppImage: `src-tauri/target/release/bundle/appimage/slice-youtube_<version>_amd64.AppImage`
 
-### macOS (Apple Silicon, macOS 14 이상)
+### macOS (Apple Silicon, macOS 14+)
 
 ```bash
 pnpm install
-pwsh scripts/fetch-binaries.ps1      # yt-dlp, deno 받기 (PowerShell 7 필요: brew install powershell)
-bash scripts/build-ffmpeg-macos.sh   # ffmpeg 9.0.2 빌드 (Homebrew 필요)
+pwsh scripts/fetch-binaries.ps1      # fetch yt-dlp, deno (needs PowerShell 7: brew install powershell)
+bash scripts/build-ffmpeg-macos.sh   # build ffmpeg 9.0.2 (needs Homebrew)
 pnpm tauri build                     # .app / .dmg
-bash scripts/verify-build-macos.sh   # 결과물 검증 (선택)
+bash scripts/verify-build-macos.sh   # verify the output (optional)
 ```
 
-- DMG: `src-tauri/target/release/bundle/dmg/slice-youtube_<버전>_aarch64.dmg`
+- DMG: `src-tauri/target/release/bundle/dmg/slice-youtube_<version>_aarch64.dmg`
 
-### 참고
+### Notes
 
-- 버전은 `src-tauri/tauri.conf.json`의 `version`을 따릅니다. 배포할 때는 `package.json`, `src-tauri/Cargo.toml`의 `version`도 같이 올립니다.
-- sidecar 바이너리(yt-dlp, deno, ffmpeg)는 git에 없으므로 `tauri dev`/`tauri build` 전에 위 준비 단계가 필요합니다. 개발 실행만 할 때는 `pnpm tauri build` 대신 `pnpm tauri dev`를 씁니다.
-- ffmpeg 스크립트는 `-Version 9.0.2`, `-Hw sw`(하드웨어 인코더 제외, Windows)로 버전과 구성을 바꿀 수 있습니다. configure 옵션은 [`build-ffmpeg.yml`](.github/workflows/build-ffmpeg.yml)과 같으니, 한쪽을 바꾸면 다른 쪽도 바꾸세요.
-- Linux는 Tauri [시스템 의존 패키지](https://v2.tauri.app/start/prerequisites/#linux)도 필요합니다.
+- The version follows `version` in `src-tauri/tauri.conf.json`. When releasing, bump `version` in `package.json` and `src-tauri/Cargo.toml` too.
+- The sidecar binaries (yt-dlp, deno, ffmpeg) are not in git, so the steps above are needed before `tauri dev` / `tauri build`. For development only, use `pnpm tauri dev` instead of `pnpm tauri build`.
+- Linux also needs Tauri's [system dependencies](https://v2.tauri.app/start/prerequisites/#linux).
 
-## 서드파티
+## Third-party
 
-앱은 아래 프로그램을 별도 실행 파일(sidecar)로 함께 배포하며, 링크하지 않고 프로세스로 실행합니다. 바이너리는 git에 포함하지 않습니다.
+The app ships the programs below as separate executables (sidecars) and runs them as processes rather than linking them. The binaries are not included in git.
 
-| 바이너리 | 라이선스 | 소스 |
+| Binary | License | Source |
 |---|---|---|
 | yt-dlp | Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) |
 | deno | MIT | [denoland/deno](https://github.com/denoland/deno) |
 | ffmpeg | LGPL 2.1+ | [FFmpeg/FFmpeg `n9.0.2`](https://github.com/FFmpeg/FFmpeg/tree/n9.0.2) |
+
+## License
+
+[MIT](LICENSE) © 2026 nopushfriday

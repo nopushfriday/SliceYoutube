@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "slice-youtube",
+        "title": "SliceYoutube",
         "width": 1180,
         "height": 780,
         "minWidth": 900,
