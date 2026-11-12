@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const vi: Record<Key, string> = {
   'tab.slice': 'Cắt',
   'tab.download': 'Tải xuống',
+  'tab.log': 'Nhật ký',
+  'log.title': 'Nhật ký tác vụ',
+  'log.copy': 'Sao chép nhật ký',
+  'log.clear': 'Xóa nhật ký',
+  'log.empty': 'Chưa có nhật ký. Đầu ra của ffmpeg/yt-dlp sẽ hiện ở đây khi bắt đầu tải.',
 
   'upd.available': 'Cập nhật lên v{v}',
   'upd.busy': 'Đang cập nhật {pct}%',
@@ -85,6 +90,7 @@ export const vi: Record<Key, string> = {
   'copyUrl': 'Sao chép liên kết',
   'showInFolder': 'Hiện trong thư mục',
   'remove': 'Xóa',
+  'redownload': 'Tải lại',
   'emptyClips.pre': 'Sau khi chọn đoạn, nhấn ',
   'emptyClips.post': ' để thêm',
   'stop': 'Dừng',

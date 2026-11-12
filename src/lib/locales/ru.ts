@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const ru: Record<Key, string> = {
   'tab.slice': 'Нарезка',
   'tab.download': 'Загрузка',
+  'tab.log': 'Журнал',
+  'log.title': 'Журнал задач',
+  'log.copy': 'Копировать журнал',
+  'log.clear': 'Очистить журнал',
+  'log.empty': 'Журнал пуст. Вывод ffmpeg/yt-dlp появится здесь после начала загрузки.',
 
   'upd.available': 'Обновить до v{v}',
   'upd.busy': 'Обновление {pct}%',
@@ -85,6 +90,7 @@ export const ru: Record<Key, string> = {
   'copyUrl': 'Копировать ссылку',
   'showInFolder': 'Показать в папке',
   'remove': 'Удалить',
+  'redownload': 'Скачать заново',
   'emptyClips.pre': 'Задав фрагмент, нажмите ',
   'emptyClips.post': ', чтобы добавить',
   'stop': 'Стоп',

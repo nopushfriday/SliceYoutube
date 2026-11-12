@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const fr: Record<Key, string> = {
   'tab.slice': 'Découper',
   'tab.download': 'Télécharger',
+  'tab.log': 'Journal',
+  'log.title': 'Journal des tâches',
+  'log.copy': 'Copier le journal',
+  'log.clear': 'Effacer le journal',
+  'log.empty': 'Aucun journal pour l’instant. La sortie de ffmpeg/yt-dlp s’affiche ici au début d’un téléchargement.',
 
   'upd.available': 'Mettre à jour vers v{v}',
   'upd.busy': 'Mise à jour {pct} %',
@@ -85,6 +90,7 @@ export const fr: Record<Key, string> = {
   'copyUrl': "Copier l'URL",
   'showInFolder': 'Afficher dans le dossier',
   'remove': 'Supprimer',
+  'redownload': 'Télécharger à nouveau',
   'emptyClips.pre': 'Après avoir défini une plage, appuyez sur ',
   'emptyClips.post': ' pour l’ajouter',
   'stop': 'Arrêter',

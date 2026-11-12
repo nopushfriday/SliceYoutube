@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const zhTW: Record<Key, string> = {
   'tab.slice': '剪輯',
   'tab.download': '下載',
+  'tab.log': '記錄',
+  'log.title': '工作記錄',
+  'log.copy': '複製記錄',
+  'log.clear': '清除記錄',
+  'log.empty': '尚無記錄。開始下載後，ffmpeg/yt-dlp 的輸出會顯示在這裡。',
 
   'upd.available': '更新至 v{v}',
   'upd.busy': '更新中 {pct}%',
@@ -85,6 +90,7 @@ export const zhTW: Record<Key, string> = {
   'copyUrl': '複製連結',
   'showInFolder': '在資料夾中顯示',
   'remove': '移除',
+  'redownload': '重新下載',
   'emptyClips.pre': '指定區間後按 ',
   'emptyClips.post': ' 新增',
   'stop': '停止',

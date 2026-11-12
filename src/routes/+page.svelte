@@ -97,7 +97,16 @@
   }
 
   // 탭: 자르기(구간 지정·화면 자르기·다운로드) / 다운로드(작업 없이 그대로 받기)
-  let tab = $state<'slice' | 'download'>('slice');
+  let tab = $state<'slice' | 'download' | 'log'>('slice');
+
+  type LogEntry = { id: number; time: string; job: number; phase: string; text: string };
+  const LOG_MAX = 2000;
+  let logs = $state<LogEntry[]>([]);
+  let logId = 0;
+  let logBox = $state<HTMLElement>();
+  function logText() {
+    return logs.map((l) => `${l.time} [#${l.job} ${l.phase}] ${l.text}`).join('\n');
+  }
   type DlItem = {
     id: number;
     url: string;
@@ -197,6 +206,17 @@
   function cancelDownloads() {
     dlStop = true;
     for (const s of dlItems) if (s.status === 'running') invoke('cancel', { job: s.id });
+  }
+
+  function redownloadItem(id: number) {
+    const s = dlItems.find((x) => x.id === id);
+    if (!s || s.status === 'running' || s.status === 'pending') return;
+    s.status = 'pending';
+    s.file = undefined;
+    s.count = undefined;
+    s.error = undefined;
+    s.percent = 0;
+    if (dlAuto) runDownloads();
   }
 
   function removeDownload(id: number) {
@@ -363,9 +383,16 @@
         }
       }
     );
+    const unLog = listen<{ job: number; phase: string; text: string }>('app-log', (e) => {
+      const stick = !logBox || logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 40;
+      logs.push({ id: logId++, time: new Date().toLocaleTimeString('en-GB'), ...e.payload });
+      if (logs.length > LOG_MAX) logs.splice(0, logs.length - LOG_MAX);
+      if (stick && tab === 'log') queueMicrotask(() => logBox?.scrollTo({ top: logBox.scrollHeight }));
+    });
     return () => {
       un.then((f) => f());
       unInfo.then((f) => f());
+      unLog.then((f) => f());
     };
   });
 
@@ -553,6 +580,16 @@
     for (const s of segs) if (s.status === 'running') invoke('cancel', { job: s.id });
   }
 
+  function redownload(id: number) {
+    const s = segs.find((x) => x.id === id);
+    if (!s || s.status === 'running' || s.status === 'pending') return;
+    s.status = 'pending';
+    s.file = undefined;
+    s.error = undefined;
+    s.percent = 0;
+    if (sliceAuto && !ytBusy) runQueue();
+  }
+
   function remove(id: number) {
     const s = segs.find((x) => x.id === id);
     if (s?.status === 'running') invoke('cancel', { job: id });
@@ -619,6 +656,7 @@
     <div class="seg">
       <button class:on={tab === 'slice'} onclick={() => (tab = 'slice')}><i class="ti ti-scissors"></i> {t('tab.slice')}</button>
       <button class:on={tab === 'download'} onclick={() => (tab = 'download')}><i class="ti ti-download"></i> {t('tab.download')}</button>
+      <button class:on={tab === 'log'} onclick={() => (tab = 'log')}><i class="ti ti-terminal-2"></i> {t('tab.log')}</button>
     </div>
     <span class="grow"></span>
     <label class="lang" title={t('lang.label')}>
@@ -845,6 +883,11 @@
                   <i class="ti ti-folder"></i>
                 </button>
               {/if}
+              {#if s.status === 'done' || s.status === 'error' || s.status === 'cancelled'}
+                <button class="mini" onclick={() => redownload(s.id)} title={t('redownload')} aria-label={t('redownload')}>
+                  <i class="ti ti-refresh"></i>
+                </button>
+              {/if}
               <button class="mini" onclick={() => remove(s.id)} title={t('remove')} aria-label={t('remove')}>
                 <i class="ti ti-x"></i>
               </button>
@@ -975,6 +1018,11 @@
                         <i class="ti ti-folder"></i>
                       </button>
                     {/if}
+                    {#if s.status === 'done' || s.status === 'error' || s.status === 'cancelled'}
+                      <button class="mini" onclick={() => redownloadItem(s.id)} title={t('redownload')} aria-label={t('redownload')}>
+                        <i class="ti ti-refresh"></i>
+                      </button>
+                    {/if}
                     <button class="mini" onclick={() => removeDownload(s.id)} title={t('remove')} aria-label={t('remove')}>
                       <i class="ti ti-x"></i>
                     </button>
@@ -1011,6 +1059,21 @@
           </button>
         </div>
       </aside>
+    </div>
+  </div>
+
+  <div class="pane" class:off={tab !== 'log'}>
+    <div class="logbar">
+      <span class="grow">{t('log.title')}</span>
+      <button class="mini" onclick={() => navigator.clipboard.writeText(logText())} title={t('log.copy')} aria-label={t('log.copy')}><i class="ti ti-copy"></i></button>
+      <button class="mini" onclick={() => (logs = [])} title={t('log.clear')} aria-label={t('log.clear')}><i class="ti ti-trash"></i></button>
+    </div>
+    <div class="logbox" bind:this={logBox}>
+      {#each logs as l (l.id)}
+        <div class="logline" class:bad={/error|failed|exited|오류|실패/i.test(l.text)}><span class="lt">{l.time} #{l.job} {l.phase}</span> {l.text}</div>
+      {:else}
+        <div class="logempty">{t('log.empty')}</div>
+      {/each}
     </div>
   </div>
 
@@ -1186,6 +1249,36 @@
     gap: 12px;
     flex: 1;
     min-height: 0;
+  }
+  .logbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .logbox {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font: 12px/1.5 ui-monospace, Consolas, monospace;
+    user-select: text;
+  }
+  .logline {
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .logline.bad {
+    color: #dc2626;
+  }
+  .logline .lt {
+    color: var(--muted);
+  }
+  .logempty {
+    color: var(--muted);
   }
   .pane.off {
     display: none;

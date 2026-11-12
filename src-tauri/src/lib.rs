@@ -387,19 +387,6 @@ fn time_tag(sec: f64) -> String {
     }
 }
 
-/// 이미 있는 파일을 덮어쓰거나 건너뛰지 않도록 " (2)", " (3)"… 을 붙인 경로를 돌려준다.
-fn unique_path(path: &Path) -> PathBuf {
-    if !path.exists() {
-        return path.to_path_buf();
-    }
-    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-    (2..)
-        .map(|n| path.with_file_name(format!("{stem} ({n}){ext}")))
-        .find(|p| !p.exists())
-        .expect("무한 반복자")
-}
-
 /// ffmpeg의 `time=HH:MM:SS.xx` 또는 yt-dlp의 `[download] 42.0%`에서 진행률(%) 추출
 fn parse_progress(s: &str, span: f64) -> Option<f64> {
     if let Some(i) = s.rfind("time=") {
@@ -543,7 +530,16 @@ fn encode_args(
 ) -> Vec<String> {
     let mut head: Vec<String> = ["-hide_banner", "-y"].map(String::from).to_vec();
     if let Some((ss, t)) = seek {
-        head.extend(["-ss".to_string(), format!("{ss:.3}"), "-t".to_string(), format!("{t:.3}")]);
+        // 캐시 파일은 -copyts로 받아 시작 시각이 원본 시간(예: 94초)이다. -seek_timestamp 없이는 ffmpeg가
+        // start_time을 -ss에 더해 구간 밖(188초)으로 이동해, 프레임 0개의 261바이트 빈 mp4가 만들어진다.
+        head.extend([
+            "-seek_timestamp".to_string(),
+            "1".to_string(),
+            "-ss".to_string(),
+            format!("{ss:.3}"),
+            "-t".to_string(),
+            format!("{t:.3}"),
+        ]);
     }
     head.extend(["-i".to_string(), input.to_string()]);
     if let (Some(enc), "h264") = (hw, codec) {
@@ -591,6 +587,18 @@ struct Outcome {
     cancelled: bool,
 }
 
+#[derive(Serialize, Clone)]
+struct LogLine {
+    job: u32,
+    phase: &'static str,
+    text: String,
+}
+
+/// 로그 탭에 한 줄을 보낸다.
+fn emit_log(app: &AppHandle, job: u32, phase: &'static str, text: impl Into<String>) {
+    let _ = app.emit("app-log", LogLine { job, phase, text: text.into() });
+}
+
 /// sidecar 프로세스를 실행하고 종료될 때까지 진행률 이벤트를 내보낸다.
 async fn run_job(
     app: &AppHandle,
@@ -600,7 +608,11 @@ async fn run_job(
     span: f64,
     phase: &'static str,
 ) -> Result<Outcome, String> {
-    let (mut rx, child) = cmd.spawn().map_err(|e| e.to_string())?;
+    emit_log(app, job, phase, "시작");
+    let (mut rx, child) = cmd.spawn().map_err(|e| {
+        emit_log(app, job, phase, format!("실행 실패: {e}"));
+        e.to_string()
+    })?;
     jobs.0.lock().unwrap().insert(job, child);
 
     let mut file: Option<String> = None;
@@ -636,13 +648,22 @@ async fn run_job(
                 }
                 if let Some(percent) = parse_progress(&s, span) {
                     let _ = app.emit("dl-progress", Progress { job, percent, phase });
+                } else {
+                    // 진행률 줄은 너무 많아 로그에서 뺀다
+                    for line in s.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                        emit_log(app, job, phase, line);
+                    }
                 }
             }
             CommandEvent::Terminated(p) => {
                 code = p.code;
+                emit_log(app, job, phase, format!("종료 코드: {}", p.code.map_or("없음".to_string(), |c| format!("{c} (0x{:X})", c as u32))));
                 break;
             }
-            CommandEvent::Error(e) => last_error = e,
+            CommandEvent::Error(e) => {
+                emit_log(app, job, phase, format!("오류: {e}"));
+                last_error = e;
+            }
             _ => {}
         }
     }
@@ -996,7 +1017,7 @@ fn build_dl_args(
     let resolved = req.resolved.as_ref().ok_or("주소를 해석하지 못했습니다")?;
     let mut args = base_args()?;
     args.extend(
-        ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime", "--match-filters", "!is_live"]
+        ["--newline", "--no-playlist", "--playlist-items", "1", "--windows-filenames", "--no-mtime", "--force-overwrites", "--match-filters", "!is_live"]
             .map(String::from),
     );
     args.push("--download-sections".into());
@@ -1240,8 +1261,11 @@ async fn download_cached(
 
     std::fs::create_dir_all(&req.out_dir).map_err(|e| e.to_string())?;
     let name = format!("{} [{}-{}].mp4", entry.title, time_tag(req.start), time_tag(req.end));
-    let final_path = unique_path(&Path::new(req.out_dir.trim_end_matches(['/', '\\'])).join(name));
-    let (input, output) = (entry.path.to_string_lossy().into_owned(), final_path.to_string_lossy().into_owned());
+    let out_dir = Path::new(req.out_dir.trim_end_matches(['/', '\\']));
+    let final_path = out_dir.join(name);
+    // 같은 이름의 파일이 있으면 교체한다. 인코딩은 임시 파일에 하고 끝나면 바꿔치기해 실패해도 기존 파일이 남는다.
+    let tmp_path = out_dir.join(format!(".cutdlp-tmp-{}.mp4", req.job));
+    let (input, output) = (entry.path.to_string_lossy().into_owned(), tmp_path.to_string_lossy().into_owned());
     let span = (req.end - req.start).max(0.1);
     let _ = app.emit("dl-progress", Progress { job: req.job, percent: 0.0, phase: "encode" });
     let encode = |hw: Option<&str>| -> Result<Command, String> {
@@ -1264,14 +1288,23 @@ async fn download_cached(
         e = run_job(app, jobs, req.job, encode(None)?, span, "encode").await?;
     }
     if e.cancelled {
-        let _ = std::fs::remove_file(&final_path);
+        let _ = std::fs::remove_file(&tmp_path);
         return Err("cancelled".into());
     }
     if e.code != Some(0) {
-        let _ = std::fs::remove_file(&final_path);
+        let _ = std::fs::remove_file(&tmp_path);
         return Err(if e.last_error.is_empty() { "인코딩에 실패했습니다".into() } else { e.last_error });
     }
-    Ok(Some(output))
+    // 프레임이 0개여도 ffmpeg는 헤더만 있는 파일(약 261바이트)을 만들고 성공(0)으로 끝난다.
+    if std::fs::metadata(&tmp_path).map_or(true, |m| m.len() < 1024) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err("인코딩 결과가 비어 있습니다".into());
+    }
+    if let Err(err) = std::fs::rename(&tmp_path, &final_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("기존 파일을 교체하지 못했습니다(다른 프로그램에서 사용 중일 수 있습니다): {err}"));
+    }
+    Ok(Some(final_path.to_string_lossy().into_owned()))
 }
 
 /// 지정 구간만 다운로드한다. (--download-sections: ffmpeg가 HTTP Range로 해당 구간만 요청)
@@ -1901,6 +1934,8 @@ mod tests {
         let (ss, i) = (a.iter().position(|x| x == "-ss").unwrap(), a.iter().position(|x| x == "-i").unwrap());
         assert!(ss < i);
         assert_eq!(&a[ss..ss + 4], ["-ss", "10.100", "-t", "8.400"]);
+        // 원본 시간(-copyts)으로 받은 캐시 파일에서 자르므로 -ss는 절대 타임스탬프여야 한다.
+        assert_eq!(&a[ss - 2..ss], ["-seek_timestamp", "1"]);
         assert!(encode_args("h264", "in.mkv", "out.mp4", "libopenh264", "8M", None, None, None).iter().all(|x| x != "-ss"));
     }
 
@@ -1917,19 +1952,6 @@ mod tests {
         assert!(cache.find("u|0|h264", 7.0, 18.5).is_none(), "범위 밖은 재사용하지 않는다");
         assert!(cache.find("u|0|h264", 10.0, 21.0).is_none());
         assert!(cache.find("u|720|h264", 10.1, 18.5).is_none(), "화질 상한이 다르면 재사용하지 않는다");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn unique_path_appends_number_when_taken() {
-        let dir = std::env::temp_dir().join(format!("cutdlp-unique-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("a [0m01.00s-0m02.00s].mp4");
-        assert_eq!(unique_path(&p), p);
-        std::fs::write(&p, b"x").unwrap();
-        assert_eq!(unique_path(&p), dir.join("a [0m01.00s-0m02.00s] (2).mp4"));
-        std::fs::write(dir.join("a [0m01.00s-0m02.00s] (2).mp4"), b"x").unwrap();
-        assert_eq!(unique_path(&p), dir.join("a [0m01.00s-0m02.00s] (3).mp4"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

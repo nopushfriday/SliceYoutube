@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const en: Record<Key, string> = {
   'tab.slice': 'Slice',
   'tab.download': 'Download',
+  'tab.log': 'Log',
+  'log.title': 'Job log',
+  'log.copy': 'Copy log',
+  'log.clear': 'Clear log',
+  'log.empty': 'No log yet. ffmpeg/yt-dlp output appears here once a download starts.',
 
   'upd.available': 'Update to v{v}',
   'upd.busy': 'Updating {pct}%',
@@ -85,6 +90,7 @@ export const en: Record<Key, string> = {
   'copyUrl': 'Copy URL',
   'showInFolder': 'Show in folder',
   'remove': 'Remove',
+  'redownload': 'Download again',
   'emptyClips.pre': 'After setting a range, press ',
   'emptyClips.post': ' to add it',
   'stop': 'Stop',
