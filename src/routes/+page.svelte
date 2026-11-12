@@ -4,6 +4,7 @@
   import { t, tb, lang, LANGS, type LangPref } from '#lib/i18n.svelte.ts';
   import type { Key } from '#lib/locales/ko.ts';
   import { invoke } from '@tauri-apps/api/core';
+  import { getVersion } from '@tauri-apps/api/app';
   import { listen } from '@tauri-apps/api/event';
   import { downloadDir, homeDir } from '@tauri-apps/api/path';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -51,6 +52,9 @@
   let upd = $state<Update | null>(null);
   let updBusy = $state(false);
   let updPct = $state(0);
+
+  let appVer = $state('');
+  getVersion().then((v) => (appVer = v)).catch(() => {});
 
   let updChecking = $state(false);
   let updMsg = $state('');
@@ -469,6 +473,12 @@
     if (start != null && start >= end) start = null;
   }
 
+  function setFullRange() {
+    if (!info) return;
+    start = 0;
+    end = Math.round(info.duration * 100) / 100;
+  }
+
   // 핸들을 끌면 영상 위치도 따라가게 한다 (재생 중이면 일시정지, seek는 쓰로틀 + 마지막 위치 보정)
   let lastSeek = 0;
   let seekTimer: ReturnType<typeof setTimeout> | undefined;
@@ -666,6 +676,7 @@
         {#each LANGS as l}<option value={l.code}>{l.name}</option>{/each}
       </select>
     </label>
+    {#if appVer}<span class="appver" title={t('upd.current')}>v{appVer}</span>{/if}
     {#if upd}
       <button class="upd" onclick={installUpdate} disabled={updBusy || running || dlRunning} title={t('upd.busyTitle')}>
         <i class="ti {updBusy ? 'ti-loader-2 spin' : 'ti-arrow-up-circle'}"></i>
@@ -767,6 +778,9 @@
           </button>
           <span class="dur">{valid ? t('seconds', { n: fmt(end! - start!, 1) }) : ''}</span>
           <span class="grow"></span>
+          <button onclick={setFullRange} disabled={info.live}>
+            <i class="ti ti-arrows-horizontal"></i> {t('fullRange')}
+          </button>
           <button onclick={preview} disabled={!valid}>
             <i class="ti ti-player-play"></i> {t('preview')}
           </button>
@@ -1402,6 +1416,11 @@
     border: 0;
     box-shadow: none;
     padding-left: 2px;
+  }
+  .appver {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
   }
   button.yt {
     font-size: 12px;

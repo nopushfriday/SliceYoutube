@@ -1,6 +1,6 @@
 [package]
 name = "slice-youtube"
-version = "1.0.1"
+version = "1.0.2"
 description = "YouTube 영상에서 필요한 구간만 다운로드하는 앱"
 authors = ["you"]
 edition = "2024"
