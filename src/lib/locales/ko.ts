@@ -2,6 +2,11 @@
 export const ko = {
   'tab.slice': '자르기',
   'tab.download': '다운로드',
+  'tab.log': '로그',
+  'log.title': '작업 로그',
+  'log.copy': '로그 복사',
+  'log.clear': '로그 지우기',
+  'log.empty': '아직 로그가 없습니다. 다운로드를 시작하면 여기에 ffmpeg/yt-dlp 출력이 표시됩니다.',
 
   'upd.available': 'v{v} 업데이트',
   'upd.busy': '업데이트 중 {pct}%',
@@ -84,6 +89,7 @@ export const ko = {
   'copyUrl': '주소 복사',
   'showInFolder': '폴더에서 보기',
   'remove': '삭제',
+  'redownload': '다시 다운로드',
   'emptyClips.pre': '구간 지정 후 ',
   'emptyClips.post': '로 추가',
   'stop': '중지',

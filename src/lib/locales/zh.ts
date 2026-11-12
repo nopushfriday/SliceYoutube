@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const zh: Record<Key, string> = {
   'tab.slice': '剪切',
   'tab.download': '下载',
+  'tab.log': '日志',
+  'log.title': '任务日志',
+  'log.copy': '复制日志',
+  'log.clear': '清除日志',
+  'log.empty': '暂无日志。开始下载后，ffmpeg/yt-dlp 的输出会显示在这里。',
 
   'upd.available': '更新到 v{v}',
   'upd.busy': '更新中 {pct}%',
@@ -85,6 +90,7 @@ export const zh: Record<Key, string> = {
   'copyUrl': '复制链接',
   'showInFolder': '在文件夹中显示',
   'remove': '删除',
+  'redownload': '重新下载',
   'emptyClips.pre': '指定区间后按 ',
   'emptyClips.post': ' 添加',
   'stop': '停止',

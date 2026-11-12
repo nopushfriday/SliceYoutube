@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const it: Record<Key, string> = {
   'tab.slice': 'Taglia',
   'tab.download': 'Scarica',
+  'tab.log': 'Registro',
+  'log.title': 'Registro attività',
+  'log.copy': 'Copia registro',
+  'log.clear': 'Cancella registro',
+  'log.empty': 'Nessun registro. L’output di ffmpeg/yt-dlp appare qui all’avvio di un download.',
 
   'upd.available': 'Aggiorna a v{v}',
   'upd.busy': 'Aggiornamento {pct}%',
@@ -85,6 +90,7 @@ export const it: Record<Key, string> = {
   'copyUrl': 'Copia URL',
   'showInFolder': 'Mostra nella cartella',
   'remove': 'Rimuovi',
+  'redownload': 'Scarica di nuovo',
   'emptyClips.pre': 'Dopo aver impostato un intervallo, premi ',
   'emptyClips.post': ' per aggiungerlo',
   'stop': 'Ferma',

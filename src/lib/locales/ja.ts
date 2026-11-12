@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const ja: Record<Key, string> = {
   'tab.slice': '切り取り',
   'tab.download': 'ダウンロード',
+  'tab.log': 'ログ',
+  'log.title': 'ジョブログ',
+  'log.copy': 'ログをコピー',
+  'log.clear': 'ログを消去',
+  'log.empty': 'まだログがありません。ダウンロードを開始すると ffmpeg/yt-dlp の出力がここに表示されます。',
 
   'upd.available': 'v{v} に更新',
   'upd.busy': '更新中 {pct}%',
@@ -85,6 +90,7 @@ export const ja: Record<Key, string> = {
   'copyUrl': 'URL をコピー',
   'showInFolder': 'フォルダーで表示',
   'remove': '削除',
+  'redownload': 'もう一度ダウンロード',
   'emptyClips.pre': '区間を指定したら ',
   'emptyClips.post': ' で追加',
   'stop': '停止',

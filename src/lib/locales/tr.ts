@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const tr: Record<Key, string> = {
   'tab.slice': 'Kes',
   'tab.download': 'İndir',
+  'tab.log': 'Günlük',
+  'log.title': 'Görev günlüğü',
+  'log.copy': 'Günlüğü kopyala',
+  'log.clear': 'Günlüğü temizle',
+  'log.empty': 'Henüz günlük yok. İndirme başlayınca ffmpeg/yt-dlp çıktısı burada görünür.',
 
   'upd.available': "v{v} sürümüne güncelle",
   'upd.busy': 'Güncelleniyor %{pct}',
@@ -85,6 +90,7 @@ export const tr: Record<Key, string> = {
   'copyUrl': 'Bağlantıyı kopyala',
   'showInFolder': 'Klasörde göster',
   'remove': 'Kaldır',
+  'redownload': 'Yeniden indir',
   'emptyClips.pre': 'Aralığı belirledikten sonra eklemek için ',
   'emptyClips.post': ' tuşuna basın',
   'stop': 'Durdur',

@@ -3,6 +3,11 @@ import type { Key } from './ko';
 export const id: Record<Key, string> = {
   'tab.slice': 'Potong',
   'tab.download': 'Unduh',
+  'tab.log': 'Log',
+  'log.title': 'Log tugas',
+  'log.copy': 'Salin log',
+  'log.clear': 'Hapus log',
+  'log.empty': 'Belum ada log. Output ffmpeg/yt-dlp muncul di sini saat unduhan dimulai.',
 
   'upd.available': 'Perbarui ke v{v}',
   'upd.busy': 'Memperbarui {pct}%',
@@ -85,6 +90,7 @@ export const id: Record<Key, string> = {
   'copyUrl': 'Salin URL',
   'showInFolder': 'Tampilkan di folder',
   'remove': 'Hapus',
+  'redownload': 'Unduh ulang',
   'emptyClips.pre': 'Setelah menentukan bagian, tekan ',
   'emptyClips.post': ' untuk menambahkan',
   'stop': 'Hentikan',
